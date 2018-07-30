@@ -1,0 +1,20 @@
+cabal-version: 2.2
+
+name: alicia-banana
+version: 0
+
+executable alicia-banana
+  build-depends:
+      base
+    , containers
+    , reactive-banana
+    , sdl2
+    , sdl2-mixer
+    , termbox-banana
+  ghc-options:
+    -O
+    -rtsopts
+    -threaded
+    -Wall
+  main-is:
+    Main.hs
