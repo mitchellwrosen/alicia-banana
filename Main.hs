@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase, OverloadedStrings, PatternSynonyms, RecursiveDo,
              ScopedTypeVariables #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 import Control.Concurrent
 import Control.Exception (handle, throwIO)
@@ -85,46 +86,44 @@ main' play eEvent _bSize = do
     eDone =
       () <$ filterE (== Tb.EventKey Tb.KeyEsc False) eEvent
 
-  bReadKey :: Behavior (Char -> Maybe Key, Int) <-
+  bReadKey :: Behavior (Char -> Maybe Key, Int, Int) <-
     (fmap.fmap) zextract $
       accumB
-        (foldr (.) id (replicate 13 zright)
+        (foldr (.) id (replicate 14 zright)
           (Z
             []
-            (keyRangeA 0, 0)
-            (zip
-              [ keyRangeB  2
-              , keyRangeC  3
-              , keyRangeD  5
-              , keyRangeE  7
-              , keyRangeF  8
-              , keyRangeG 10
-              , keyRangeA 12
-              , keyRangeB 14
-              , keyRangeC 15
-              , keyRangeD 17
-              , keyRangeE 19
-              , keyRangeF 20
-              , keyRangeG 22
-              , keyRangeA 24
-              , keyRangeB 26
-              , keyRangeC 27
-              , keyRangeD 29
-              , keyRangeE 31
-              , keyRangeF 32
-              , keyRangeG 34
-              , keyRangeA 36
-              , keyRangeB 38
-              , keyRangeC 39
-              , keyRangeD 41
-              , keyRangeE 43
-              , keyRangeF 44
-              , keyRangeG 46
-              , keyRangeA 48
-              , keyRangeB 50
-              , keyRangeC 51
-              ]
-              [3,6..])))
+              (keyRangeA   0,  0,  65)
+            [ (keyRangeAs  1,  2,  66)
+            , (keyRangeC   3,  6,  71)
+            , (keyRangeCs  4,  8,  74)
+            , (keyRangeDs  6, 11,  77)
+            , (keyRangeF   8, 15,  80)
+            , (keyRangeFs  9, 17,  83)
+            , (keyRangeGs 11, 20,  86)
+            , (keyRangeAs 13, 23,  89)
+            , (keyRangeC  15, 27,  92)
+            , (keyRangeCs 16, 29,  95)
+            , (keyRangeDs 18, 32,  98)
+            , (keyRangeF  20, 36, 101)
+            , (keyRangeFs 21, 38, 104)
+            , (keyRangeGs 23, 41, 107)
+            , (keyRangeAs 25, 44, 110)
+            , (keyRangeC  27, 48, 113)
+            , (keyRangeCs 28, 50, 116)
+            , (keyRangeDs 30, 53, 119)
+            , (keyRangeF  32, 57, 122)
+            , (keyRangeFs 33, 59, 125)
+            , (keyRangeGs 35, 62, 128)
+            , (keyRangeAs 37, 65, 131)
+            , (keyRangeC  39, 69, 134)
+            , (keyRangeCs 40, 71, 137)
+            , (keyRangeDs 42, 74, 140)
+            , (keyRangeF  44, 78, 143)
+            , (keyRangeFs 45, 80, 146)
+            , (keyRangeGs 47, 83, 149)
+            , (keyRangeAs 49, 86, 152)
+            , (keyRangeC  51, 90, 155)
+            ]))
         (unions
           [ zleft  <$ filterE (== Tb.EventKey Tb.KeyArrowLeft  False) eEvent
           , zright <$ filterE (== Tb.EventKey Tb.KeyArrowRight False) eEvent
@@ -133,7 +132,7 @@ main' play eEvent _bSize = do
   let
     ePlay :: Event Key
     ePlay =
-      filterJust ((\(f, _) c -> f c) <$> bReadKey <@> eKeyChar)
+      filterJust ((\(f, _, _) c -> f c) <$> bReadKey <@> eKeyChar)
 
   let
     bKeyGen :: MonadMoment m => Key -> m (Behavior Int)
@@ -258,13 +257,14 @@ main' play eEvent _bSize = do
     bScene :: Behavior Tb.Scene
     bScene =
       Tb.Scene
-        <$> ((<>)
-              <$> (renderPiano <$> bPiano)
-              <*> ((\(_, x) ->
-                    foldMap
-                      (\i -> Tb.set i 9 (Tb.Cell ' ' mempty Tb.green))
-                      [x..x+65])
-                  <$> bReadKey))
+        <$> mconcat
+              [ renderPiano <$> bPiano
+              , ((\(_, x, y) ->
+                  foldMap
+                    (\i -> Tb.set i 9 (Tb.Cell ' ' mempty Tb.green))
+                    [x..y])
+                <$> bReadKey)
+              ]
         <*> pure Tb.NoCursor
 
   reactimate (play <$> ePlay)
@@ -287,14 +287,16 @@ keyRange :: [Char] -> Int -> Char -> Maybe Key
 keyRange cs i =
   flip Map.lookup (Map.fromList (zip cs (drop i [minBound..maxBound])))
 
-keyRangeA, keyRangeB, keyRangeC, keyRangeD, keyRangeE, keyRangeF, keyRangeG :: Int -> Char -> Maybe Key
-keyRangeA = keyRange "zsxcfvgbnjmk,l./'q2we4r5t6yu8i9op-[=]"
-keyRangeB = keyRange "zxdcfvbhnjmk,.;/'qw3e4r5ty7u8io0p-[=]"
-keyRangeC = keyRange "zsxdcvgbhnjm,l.;/q2w3e4rt6y7ui9o0p-[]"
-keyRangeD = keyRange "zsxcfvgbhnmk,l./'q2w3er5t6yu8i9o0p[=]"
-keyRangeE = keyRange "zxdcfvgbnjmk,.;/'q2we4r5ty7u8i9op-[=]"
-keyRangeF = keyRange "zsxdcfvbhnjm,l.;/'qw3e4rt6y7u8io0p-[]"
-keyRangeG = keyRange "zsxdcvgbhnmk,l.;/q2w3er5t6y7ui9o0p[=]"
+keyRangeA, keyRangeAs, keyRangeC, keyRangeCs, keyRangeDs, keyRangeF,
+  keyRangeFs, keyRangeGs :: Int -> Char -> Maybe Key
+keyRangeA  = keyRange "zsxcfvgbnjmk,l./'q2we4r5t6yu8i9op-[=]"
+keyRangeAs = keyRange "azxdcfvbhnjmk,.;/'qw3e4r5ty7u8io0p-[=]"
+keyRangeC  = keyRange "zsxdcvgbhnjm,l.;/q2w3e4rt6y7ui9o0p-[]"
+keyRangeCs = keyRange "azsxcfvgbhnmk,l./'q2w3er5t6yu8i9o0p[=]"
+keyRangeDs = keyRange "azxdcfvgbnjmk,.;/'q2we4r5ty7u8i9op-[=]"
+keyRangeF  = keyRange "zsxdcfvbhnjm,l.;/'qw3e4rt6y7u8io0p-[]"
+keyRangeFs = keyRange "azsxdcvgbhnmk,l.;/q2w3er5t6y7ui9o0p[=]"
+keyRangeGs = keyRange "azsxcfvgbnjmk,l./'q2we4r5t6yu8i9op-[=]"
 
 data Piano
   = Piano !Int !Int !Int
@@ -506,3 +508,9 @@ pianoFiles =
 
 pattern NoFreeChannels :: SDL.SDLException
 pattern NoFreeChannels <- SDL.SDLCallFailed { SDL.sdlExceptionError = "No free channels available" }
+
+instance Monoid a => Monoid (Behavior a) where
+  mempty = pure mempty
+
+instance Semigroup a => Semigroup (Behavior a) where
+  (<>) = liftA2 (<>)
