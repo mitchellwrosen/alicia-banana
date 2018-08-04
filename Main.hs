@@ -73,6 +73,16 @@ main' play eEvent _bSize = do
     pure eTick_
 
   let
+    eKeyLeft :: Event Tb.Event
+    eKeyLeft =
+      filterE (== Tb.EventKey Tb.KeyArrowLeft False) eEvent
+
+  let
+    eKeyRight :: Event Tb.Event
+    eKeyRight =
+      filterE (== Tb.EventKey Tb.KeyArrowRight False) eEvent
+
+  let
     eKeyChar :: Event Char
     eKeyChar =
       filterJust
@@ -86,53 +96,22 @@ main' play eEvent _bSize = do
     eDone =
       () <$ filterE (== Tb.EventKey Tb.KeyEsc False) eEvent
 
-  bReadKey :: Behavior (Char -> Maybe Key, Int, Int) <-
+  let
+    eZip :: Event (Z a -> Z a)
+    eZip =
+      unions
+        [ zleft  <$ eKeyLeft
+        , zright <$ eKeyRight
+        ]
+
+  bKeyBindings :: Behavior KeyBindings <-
     (fmap.fmap) zextract $
-      accumB
-        (foldr (.) id (replicate 14 zright)
-          (Z
-            []
-              (keyRangeA   0,  0,  65)
-            [ (keyRangeAs  1,  2,  66)
-            , (keyRangeC   3,  6,  71)
-            , (keyRangeCs  4,  8,  74)
-            , (keyRangeDs  6, 11,  77)
-            , (keyRangeF   8, 15,  80)
-            , (keyRangeFs  9, 17,  83)
-            , (keyRangeGs 11, 20,  86)
-            , (keyRangeAs 13, 23,  89)
-            , (keyRangeC  15, 27,  92)
-            , (keyRangeCs 16, 29,  95)
-            , (keyRangeDs 18, 32,  98)
-            , (keyRangeF  20, 36, 101)
-            , (keyRangeFs 21, 38, 104)
-            , (keyRangeGs 23, 41, 107)
-            , (keyRangeAs 25, 44, 110)
-            , (keyRangeC  27, 48, 113)
-            , (keyRangeCs 28, 50, 116)
-            , (keyRangeDs 30, 53, 119)
-            , (keyRangeF  32, 57, 122)
-            , (keyRangeFs 33, 59, 125)
-            , (keyRangeGs 35, 62, 128)
-            , (keyRangeAs 37, 65, 131)
-            , (keyRangeC  39, 69, 134)
-            , (keyRangeCs 40, 71, 137)
-            , (keyRangeDs 42, 74, 140)
-            , (keyRangeF  44, 78, 143)
-            , (keyRangeFs 45, 80, 146)
-            , (keyRangeGs 47, 83, 149)
-            , (keyRangeAs 49, 86, 152)
-            , (keyRangeC  51, 90, 155)
-            ]))
-        (unions
-          [ zleft  <$ filterE (== Tb.EventKey Tb.KeyArrowLeft  False) eEvent
-          , zright <$ filterE (== Tb.EventKey Tb.KeyArrowRight False) eEvent
-          ])
+      accumB (zfromList 14 [minBound..maxBound]) eZip
 
   let
     ePlay :: Event Key
     ePlay =
-      filterJust ((\(f, _, _) c -> f c) <$> bReadKey <@> eKeyChar)
+      filterJust (keyBindingsToKey <$> bKeyBindings <@> eKeyChar)
 
   let
     bKeyGen :: MonadMoment m => Key -> m (Behavior Int)
@@ -259,11 +238,7 @@ main' play eEvent _bSize = do
       Tb.Scene
         <$> mconcat
               [ renderPiano <$> bPiano
-              , ((\(_, x, y) ->
-                  foldMap
-                    (\i -> Tb.set i 9 (Tb.Cell ' ' mempty Tb.green))
-                    [x..y])
-                <$> bReadKey)
+              , renderKeyBindings <$> bKeyBindings
               ]
         <*> pure Tb.NoCursor
 
@@ -283,20 +258,155 @@ data Key
   | C8
   deriving (Bounded, Enum, Eq)
 
-keyRange :: [Char] -> Int -> Char -> Maybe Key
-keyRange cs i =
-  flip Map.lookup (Map.fromList (zip cs (drop i [minBound..maxBound])))
+data KeyBindings
+  = KeyBindingsA0
+  | KeyBindingsAs0
+  | KeyBindingsC1
+  | KeyBindingsCs1
+  | KeyBindingsDs1
+  | KeyBindingsF1
+  | KeyBindingsFs1
+  | KeyBindingsGs1
+  | KeyBindingsAs1
+  | KeyBindingsC2
+  | KeyBindingsCs2
+  | KeyBindingsDs2
+  | KeyBindingsF2
+  | KeyBindingsFs2
+  | KeyBindingsGs2
+  | KeyBindingsAs2
+  | KeyBindingsC3
+  | KeyBindingsCs3
+  | KeyBindingsDs3
+  | KeyBindingsF3
+  | KeyBindingsFs3
+  | KeyBindingsGs3
+  | KeyBindingsAs3
+  | KeyBindingsC4
+  | KeyBindingsCs4
+  | KeyBindingsDs4
+  | KeyBindingsF4
+  | KeyBindingsFs4
+  | KeyBindingsGs4
+  | KeyBindingsAs4
+  | KeyBindingsC5
+  deriving (Bounded, Enum)
 
-keyRangeA, keyRangeAs, keyRangeC, keyRangeCs, keyRangeDs, keyRangeF,
-  keyRangeFs, keyRangeGs :: Int -> Char -> Maybe Key
-keyRangeA  = keyRange "zsxcfvgbnjmk,l./'q2we4r5t6yu8i9op-[=]"
-keyRangeAs = keyRange "azxdcfvbhnjmk,.;/'qw3e4r5ty7u8io0p-[=]"
-keyRangeC  = keyRange "zsxdcvgbhnjm,l.;/q2w3e4rt6y7ui9o0p-[]"
-keyRangeCs = keyRange "azsxcfvgbhnmk,l./'q2w3er5t6yu8i9o0p[=]"
-keyRangeDs = keyRange "azxdcfvgbnjmk,.;/'q2we4r5ty7u8i9op-[=]"
-keyRangeF  = keyRange "zsxdcfvbhnjm,l.;/'qw3e4rt6y7u8io0p-[]"
-keyRangeFs = keyRange "azsxdcvgbhnmk,l.;/q2w3er5t6y7ui9o0p[=]"
-keyRangeGs = keyRange "azsxcfvgbnjmk,l./'q2we4r5t6yu8i9op-[=]"
+keyBindingsToKey :: KeyBindings -> Char -> Maybe Key
+keyBindingsToKey = \case
+  KeyBindingsA0  -> flip Map.lookup (Map.fromList (zip keysA  [A0  ..]))
+  KeyBindingsAs0 -> flip Map.lookup (Map.fromList (zip keysAs [As0 ..]))
+  KeyBindingsC1  -> flip Map.lookup (Map.fromList (zip keysC  [C1  ..]))
+  KeyBindingsCs1 -> flip Map.lookup (Map.fromList (zip keysCs [Cs1 ..]))
+  KeyBindingsDs1 -> flip Map.lookup (Map.fromList (zip keysDs [Ds1 ..]))
+  KeyBindingsF1  -> flip Map.lookup (Map.fromList (zip keysF  [F1  ..]))
+  KeyBindingsFs1 -> flip Map.lookup (Map.fromList (zip keysFs [Fs1 ..]))
+  KeyBindingsGs1 -> flip Map.lookup (Map.fromList (zip keysGs [Gs1 ..]))
+  KeyBindingsAs1 -> flip Map.lookup (Map.fromList (zip keysAs [As1 ..]))
+  KeyBindingsC2  -> flip Map.lookup (Map.fromList (zip keysC  [C2  ..]))
+  KeyBindingsCs2 -> flip Map.lookup (Map.fromList (zip keysCs [Cs2 ..]))
+  KeyBindingsDs2 -> flip Map.lookup (Map.fromList (zip keysDs [Ds2 ..]))
+  KeyBindingsF2  -> flip Map.lookup (Map.fromList (zip keysF  [F2  ..]))
+  KeyBindingsFs2 -> flip Map.lookup (Map.fromList (zip keysFs [Fs2 ..]))
+  KeyBindingsGs2 -> flip Map.lookup (Map.fromList (zip keysGs [Gs2 ..]))
+  KeyBindingsAs2 -> flip Map.lookup (Map.fromList (zip keysAs [As2 ..]))
+  KeyBindingsC3  -> flip Map.lookup (Map.fromList (zip keysC  [C3  ..]))
+  KeyBindingsCs3 -> flip Map.lookup (Map.fromList (zip keysCs [Cs3 ..]))
+  KeyBindingsDs3 -> flip Map.lookup (Map.fromList (zip keysDs [Ds3 ..]))
+  KeyBindingsF3  -> flip Map.lookup (Map.fromList (zip keysF  [F3  ..]))
+  KeyBindingsFs3 -> flip Map.lookup (Map.fromList (zip keysFs [Fs3 ..]))
+  KeyBindingsGs3 -> flip Map.lookup (Map.fromList (zip keysGs [Gs3 ..]))
+  KeyBindingsAs3 -> flip Map.lookup (Map.fromList (zip keysAs [As3 ..]))
+  KeyBindingsC4  -> flip Map.lookup (Map.fromList (zip keysC  [C4  ..]))
+  KeyBindingsCs4 -> flip Map.lookup (Map.fromList (zip keysCs [Cs4 ..]))
+  KeyBindingsDs4 -> flip Map.lookup (Map.fromList (zip keysDs [Ds4 ..]))
+  KeyBindingsF4  -> flip Map.lookup (Map.fromList (zip keysF  [F4  ..]))
+  KeyBindingsFs4 -> flip Map.lookup (Map.fromList (zip keysFs [Fs4 ..]))
+  KeyBindingsGs4 -> flip Map.lookup (Map.fromList (zip keysGs [Gs4 ..]))
+  KeyBindingsAs4 -> flip Map.lookup (Map.fromList (zip keysAs [As4 ..]))
+  KeyBindingsC5  -> flip Map.lookup (Map.fromList (zip keysC  [C5  ..]))
+ where
+  keysA  = "zsxcfvgbnjmk,l./'q2we4r5t6yu8i9op-[=]"
+  keysAs = "azxdcfvbhnjmk,.;/'qw3e4r5ty7u8io0p-[=]"
+  keysC  = "zsxdcvgbhnjm,l.;/q2w3e4rt6y7ui9o0p-[]"
+  keysCs = "azsxcfvgbhnmk,l./'q2w3er5t6yu8i9o0p[=]"
+  keysDs = "azxdcfvgbnjmk,.;/'q2we4r5ty7u8i9op-[=]"
+  keysF  = "zsxdcfvbhnjm,l.;/'qw3e4rt6y7u8io0p-[]"
+  keysFs = "azsxdcvgbhnmk,l.;/q2w3er5t6y7ui9o0p[=]"
+  keysGs = "azsxcfvgbnjmk,l./'q2we4r5t6yu8i9op-[=]"
+
+renderKeyBindings :: KeyBindings -> Tb.Cells
+renderKeyBindings = \case
+  KeyBindingsA0  -> keyBindingsA   0
+  KeyBindingsAs0 -> keyBindingsAs  2
+  KeyBindingsC1  -> keyBindingsC   5
+  KeyBindingsCs1 -> keyBindingsCs  7
+  KeyBindingsDs1 -> keyBindingsDs 10
+  KeyBindingsF1  -> keyBindingsF  14
+  KeyBindingsFs1 -> keyBindingsFs 16
+  KeyBindingsGs1 -> keyBindingsGs 19
+  KeyBindingsAs1 -> keyBindingsAs 23
+  KeyBindingsC2  -> keyBindingsC  26
+  KeyBindingsCs2 -> keyBindingsCs 28
+  KeyBindingsDs2 -> keyBindingsDs 31
+  KeyBindingsF2  -> keyBindingsF  35
+  KeyBindingsFs2 -> keyBindingsFs 37
+  KeyBindingsGs2 -> keyBindingsGs 40
+  KeyBindingsAs2 -> keyBindingsAs 44
+  KeyBindingsC3  -> keyBindingsC  47
+  KeyBindingsCs3 -> keyBindingsCs 49
+  KeyBindingsDs3 -> keyBindingsDs 52
+  KeyBindingsF3  -> keyBindingsF  56
+  KeyBindingsFs3 -> keyBindingsFs 58
+  KeyBindingsGs3 -> keyBindingsGs 61
+  KeyBindingsAs3 -> keyBindingsAs 65
+  KeyBindingsC4  -> keyBindingsC  68
+  KeyBindingsCs4 -> keyBindingsCs 70
+  KeyBindingsDs4 -> keyBindingsDs 73
+  KeyBindingsF4  -> keyBindingsF  77
+  KeyBindingsFs4 -> keyBindingsFs 79
+  KeyBindingsGs4 -> keyBindingsGs 82
+  KeyBindingsAs4 -> keyBindingsAs 86
+  KeyBindingsC5  -> keyBindingsC  89
+ where
+  keyBindingsA, keyBindingsAs, keyBindingsC, keyBindingsCs, keyBindingsDs,
+    keyBindingsF :: Int -> Tb.Cells
+  keyBindingsA  c = whites (c+1) <> blacksA  (c+3)
+  keyBindingsAs c = whites (c+2) <> blacksAs (c+1)
+  keyBindingsC  c = whites (c+2) <> blacksC  (c+4)
+  keyBindingsCs c = whites (c+3) <> blacksCs (c+2)
+  keyBindingsDs c = whites (c+3) <> blacksDs (c+2)
+  keyBindingsF  c = whites (c+2) <> blacksF  (c+4)
+  keyBindingsFs c = whites (c+3) <> blacksFs (c+2)
+  keyBindingsGs c = whites (c+3) <> blacksGs (c+2)
+
+  blacksA, blacksAs, blacksC, blacksCs :: Int -> Tb.Cells
+  blacksA  = blacks [0,6,9,15,18,21,27,30,36,39,42,48,51,57,60]    "sfgjkl'245689-="
+  blacksAs = blacks [0,6,9,15,18,21,27,30,36,39,42,48,51,57,60,63] "adfhjk;'345780-="
+  blacksC  = blacks [0,3,9,12,15,21,24,30,33,36,42,45,51,54,57]    "sdghjl;2346790-"
+  blacksCs = blacks [0,3,9,12,15,21,24,30,33,36,42,45,51,54,57,63] "asfghkl'2356890="
+  blacksDs = blacks [0,6,9,12,18,21,27,30,33,39,42,48,51,54,60,63] "asfghkl'2356890="
+  blacksF  = blacks [0,3,6,12,15,21,24,27,33,36,42,45,48,54,57]    "sdfhjl;'346780-"
+  blacksFs = blacks [0,3,6,12,15,21,24,27,33,36,42,45,48,54,57,63] "asdghkl;2356790="
+  blacksGs = blacks [0,3,9,12,18,21,24,30,33,39,42,45,51,54,60,63] "asfgjkl'245689-="
+
+  whites :: Int -> Tb.Cells
+  whites c0 =
+    foldMap
+      (white c0)
+      (zip [0,3..] "zxcvbnm,./qwertyuiop[]")
+
+  blacks :: [Int] -> [Char] -> Int -> Tb.Cells
+  blacks xs ys c0 =
+    foldMap (black c0) (zip xs ys)
+
+  white :: Int -> (Int, Char) -> Tb.Cells
+  white c0 (c, x) =
+    Tb.set (c0+c) 8 (Tb.Cell x Tb.black Tb.white)
+
+  black :: Int -> (Int, Char) -> Tb.Cells
+  black c0 (c, x) =
+    Tb.set (c0+c) 4 (Tb.Cell x Tb.white Tb.black)
 
 data Piano
   = Piano !Int !Int !Int
@@ -414,6 +524,13 @@ keyB c r p =
 
 data Z a
   = Z [a] a [a]
+
+zfromList :: Int -> [a] -> Z a
+zfromList n = \case
+  (x:xs) ->
+    foldr (.) id (replicate n zright) (Z [] x xs)
+  [] ->
+    error "zfromList: empty list"
 
 zextract :: Z a -> a
 zextract = \case
