@@ -53,23 +53,61 @@ main = do
   audio :: SDL.Mixer.Audio
   audio =
     SDL.Mixer.Audio
-      { SDL.Mixer.audioFrequency = 11025
-          -- 22050
+      { SDL.Mixer.audioFrequency = 11025 -- 22050
       , SDL.Mixer.audioFormat    = SDL.Mixer.FormatS16_Sys
       , SDL.Mixer.audioOutput    = SDL.Mixer.Stereo
       }
+
+data InterfaceIn
+  = InterfaceIn
+      (Event Tb.Event)
+      (Event PianoOutput)
+      (Behavior PianoView)
+
+data InterfaceOut
+  = InterfaceOut
+      (Event PianoInput)
+      (Event ())
+      (Behavior Tb.Scene)
+
+data PianoOut
+  = PianoOut
+      (Event PianoOutput)
+      (Behavior PianoView)
+
+data PianoInput
+  = Tick
+  | Play Key
+  deriving Eq
+
+data PianoOutput
+  = PianoOutput
+
+type PianoView
+  = Piano
+  -- TODO Don't provide the whole piano, only a view
 
 main'
   :: (Key -> IO ())
   -> Event Tb.Event
   -> Behavior (Int, Int)
   -> MomentIO (Behavior Tb.Scene, Event ())
-main' play eEvent _bSize = do
-  eTick :: Event () <- do
+main' play eEvent _bSize = mdo
+  InterfaceOut ePianoInput eDone bScene <-
+    makeInterface (InterfaceIn eEvent ePianoOutput bPianoView)
+  PianoOut ePianoOutput bPianoView <-
+    makePiano play ePianoInput
+  pure (bScene, eDone)
+
+makeInterface
+  :: InterfaceIn
+  -> MomentIO InterfaceOut
+makeInterface (InterfaceIn eEvent _ePianoOutput bPianoView) = do
+  eTick :: Event PianoInput <- do
     (eTick_, fireTick) <- newEvent
     (liftIO . void . forkIO . forever) $ do
       threadDelay (250*1000)
-      fireTick ()
+      fireTick Tick
     pure eTick_
 
   let
@@ -106,12 +144,49 @@ main' play eEvent _bSize = do
 
   bKeyBindings :: Behavior KeyBindings <-
     (fmap.fmap) zextract $
-      accumB (zfromList 14 [minBound..maxBound]) eZip
+      accumB (zfromList 13 [minBound..maxBound]) eZip
 
   let
     ePlay :: Event Key
     ePlay =
       filterJust (keyBindingsToKey <$> bKeyBindings <@> eKeyChar)
+
+  let
+    ePianoInput :: Event PianoInput
+    ePianoInput =
+      unionWith const (Play <$> ePlay) eTick
+
+  let
+    bScene :: Behavior Tb.Scene
+    bScene =
+      Tb.Scene
+        <$> mconcat
+              [ renderPiano <$> bPianoView
+              , renderKeyBindings <$> bKeyBindings
+              ]
+        <*> pure Tb.NoCursor
+
+  pure (InterfaceOut ePianoInput eDone bScene)
+
+makePiano
+  :: (Key -> IO ())
+  -> Event PianoInput
+  -> MomentIO PianoOut
+makePiano play ePianoInput = do
+  let
+    eTick :: Event PianoInput
+    eTick =
+      filterE (== Tick) ePianoInput
+
+  let
+    ePlay :: Event Key
+    ePlay =
+      filterJust (f <$> ePianoInput)
+     where
+      f :: PianoInput -> Maybe Key
+      f = \case
+        Play key -> Just key
+        Tick     -> Nothing
 
   let
     bKeyGen :: MonadMoment m => Key -> m (Behavior Int)
@@ -222,29 +297,21 @@ main' play eEvent _bSize = do
     bPiano :: Behavior Piano
     bPiano =
       Piano
-        <$> bA0 <*> bAs0 <*> bB0
-        <*> bC1 <*> bCs1 <*> bD1 <*> bDs1 <*> bE1 <*> bF1 <*> bFs1 <*> bG1 <*> bGs1 <*> bA1 <*> bAs1 <*> bB1
-        <*> bC2 <*> bCs2 <*> bD2 <*> bDs2 <*> bE2 <*> bF2 <*> bFs2 <*> bG2 <*> bGs2 <*> bA2 <*> bAs2 <*> bB2
-        <*> bC3 <*> bCs3 <*> bD3 <*> bDs3 <*> bE3 <*> bF3 <*> bFs3 <*> bG3 <*> bGs3 <*> bA3 <*> bAs3 <*> bB3
-        <*> bC4 <*> bCs4 <*> bD4 <*> bDs4 <*> bE4 <*> bF4 <*> bFs4 <*> bG4 <*> bGs4 <*> bA4 <*> bAs4 <*> bB4
-        <*> bC5 <*> bCs5 <*> bD5 <*> bDs5 <*> bE5 <*> bF5 <*> bFs5 <*> bG5 <*> bGs5 <*> bA5 <*> bAs5 <*> bB5
-        <*> bC6 <*> bCs6 <*> bD6 <*> bDs6 <*> bE6 <*> bF6 <*> bFs6 <*> bG6 <*> bGs6 <*> bA6 <*> bAs6 <*> bB6
-        <*> bC7 <*> bCs7 <*> bD7 <*> bDs7 <*> bE7 <*> bF7 <*> bFs7 <*> bG7 <*> bGs7 <*> bA7 <*> bAs7 <*> bB7
-        <*> bC8
-
-  let
-    bScene :: Behavior Tb.Scene
-    bScene =
-      Tb.Scene
-        <$> mconcat
-              [ renderPiano <$> bPiano
-              , renderKeyBindings <$> bKeyBindings
-              ]
-        <*> pure Tb.NoCursor
+        <$> bA0  <*> bAs0 <*> bB0  <*> bC1  <*> bCs1 <*> bD1  <*> bDs1 <*> bE1
+        <*> bF1  <*> bFs1 <*> bG1  <*> bGs1 <*> bA1  <*> bAs1 <*> bB1  <*> bC2
+        <*> bCs2 <*> bD2  <*> bDs2 <*> bE2  <*> bF2  <*> bFs2 <*> bG2  <*> bGs2
+        <*> bA2  <*> bAs2 <*> bB2  <*> bC3  <*> bCs3 <*> bD3  <*> bDs3 <*> bE3
+        <*> bF3  <*> bFs3 <*> bG3  <*> bGs3 <*> bA3  <*> bAs3 <*> bB3  <*> bC4
+        <*> bCs4 <*> bD4  <*> bDs4 <*> bE4  <*> bF4  <*> bFs4 <*> bG4  <*> bGs4
+        <*> bA4  <*> bAs4 <*> bB4  <*> bC5  <*> bCs5 <*> bD5  <*> bDs5 <*> bE5
+        <*> bF5  <*> bFs5 <*> bG5  <*> bGs5 <*> bA5  <*> bAs5 <*> bB5  <*> bC6
+        <*> bCs6 <*> bD6  <*> bDs6 <*> bE6  <*> bF6  <*> bFs6 <*> bG6  <*> bGs6
+        <*> bA6  <*> bAs6 <*> bB6  <*> bC7  <*> bCs7 <*> bD7  <*> bDs7 <*> bE7
+        <*> bF7  <*> bFs7 <*> bG7  <*> bGs7 <*> bA7  <*> bAs7 <*> bB7  <*> bC8
 
   reactimate (play <$> ePlay)
 
-  pure (bScene, eDone)
+  pure (PianoOut never bPiano)
 
 data Key
   = A0 | As0 | B0
