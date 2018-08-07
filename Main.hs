@@ -30,7 +30,7 @@ main = do
   SDL.initialize [SDL.InitAudio]
 
   SDL.Mixer.withAudio audio 256 $ do
-    SDL.Mixer.setChannels 16
+    SDL.Mixer.setChannels 32
 
     chunks :: IntMap SDL.Mixer.Chunk <- do
       traverse SDL.Mixer.load pianoFiles
@@ -114,19 +114,9 @@ makeInterface (InterfaceIn eEvent _ePianoOutput bPianoView) = do
   eTick :: Event PianoInput <- do
     (eTick_, fireTick) <- newEvent
     (liftIO . void . forkIO . forever) $ do
-      threadDelay (250*1000)
+      threadDelay (125*1000)
       fireTick Tick
     pure eTick_
-
-  let
-    eKeyLeft :: Event Tb.Event
-    eKeyLeft =
-      filterE (== Tb.EventKey Tb.KeyArrowLeft False) eEvent
-
-  let
-    eKeyRight :: Event Tb.Event
-    eKeyRight =
-      filterE (== Tb.EventKey Tb.KeyArrowRight False) eEvent
 
   let
     eKeyChar :: Event Char
@@ -142,17 +132,20 @@ makeInterface (InterfaceIn eEvent _ePianoOutput bPianoView) = do
     eDone =
       () <$ filterE (== Tb.EventKey Tb.KeyEsc False) eEvent
 
-  let
-    eZip :: Event (Z a -> Z a)
-    eZip =
-      unions
-        [ zleft  <$ eKeyLeft
-        , zright <$ eKeyRight
-        ]
-
-  bKeyBindings :: Behavior KeyBindings <-
+  bKeyBindings :: Behavior KeyBindings <- do
+    let
+      eLeft  = filterE (== Tb.EventKey Tb.KeyArrowLeft  False) eEvent
+      eRight = filterE (== Tb.EventKey Tb.KeyArrowRight False) eEvent
+      eDown  = filterE (== Tb.EventKey Tb.KeyArrowDown  False) eEvent
+      eUp    = filterE (== Tb.EventKey Tb.KeyArrowUp    False) eEvent
     (fmap.fmap) zextract $
-      accumB (zfromList 13 [minBound..maxBound]) eZip
+      accumB (iterate zright (zfromList [minBound..maxBound]) !! 13)
+        (unions
+          [ zleft                   <$ eLeft
+          , zright                  <$ eRight
+          , (!! 7) . iterate zleft  <$ eDown
+          , (!! 7) . iterate zright <$ eUp
+          ])
 
   let
     ePlay :: Event Key
@@ -343,7 +336,7 @@ keyOffset = \case
 
 keyShape :: Key -> KeyShape
 keyShape = \case
-  A0  -> KeyShapeU
+  A0  -> KeyShapeL
   As0 -> KeyShapeB
   B0  -> KeyShapeR
   C1  -> KeyShapeL
@@ -430,13 +423,14 @@ keyShape = \case
   A7  -> KeyShapeU
   As7 -> KeyShapeB
   B7  -> KeyShapeR
-  C8  -> KeyShapeL
+  C8  -> KeyShapeW
 
 data KeyShape
   = KeyShapeB
   | KeyShapeL
   | KeyShapeR
   | KeyShapeU
+  | KeyShapeW
 
 data KeyBindings
   = KeyBindingsA0
@@ -582,15 +576,17 @@ renderKeyBindings = \case
 
   white :: Int -> (Int, Char) -> Tb.Cells
   white c0 (c, x) =
-    Tb.set (c0+c) 8 (Tb.Cell x Tb.black Tb.white)
+    Tb.set (c0+c) 9 (Tb.Cell x Tb.black Tb.white)
 
   black :: Int -> (Int, Char) -> Tb.Cells
   black c0 (c, x) =
-    Tb.set (c0+c) 4 (Tb.Cell x Tb.white Tb.black)
+    Tb.set (c0+c) 5 (Tb.Cell x Tb.white Tb.black)
 
 renderPiano :: PianoView -> Tb.Cells
 renderPiano (PianoView keys) =
-  foldMap (\k -> renderKey 0 0 (k, k `elem` keys)) [minBound..maxBound]
+  foldMap (\c -> Tb.set c 0 (Tb.Cell ' ' mempty Tb.red)) [0..155]
+  <>
+  foldMap (\k -> renderKey 0 1 (k, k `elem` keys)) [minBound..maxBound]
  where
   renderKey :: Int -> Int -> (Key, Bool) -> Tb.Cells
   renderKey c0 r0 =
@@ -603,6 +599,7 @@ renderPiano (PianoView keys) =
         p   <- [False, True]
         pure ((key, p), renderKey_ (c0 + keyOffset key) r0 p (keyShape key))
 
+-- TODO clean this function up
 renderKey_ :: Int -> Int -> Bool -> KeyShape -> Tb.Cells
 renderKey_ c r p = \case
   KeyShapeL ->
@@ -653,6 +650,22 @@ renderKey_ c r p = \case
         , d c (r+7), d (c+1) (r+7), d (c+2) (r+7)
         , d c (r+8), d (c+1) (r+8), d (c+2) (r+8)
         ]
+  KeyShapeW ->
+    let
+      d u v =
+        Tb.set u v (Tb.Cell ' ' mempty (if p then Tb.blue else Tb.white))
+    in
+      mconcat
+        [ d c r,     d (c+1) r    , d (c+2) r
+        , d c (r+1), d (c+1) (r+1), d (c+2) (r+1)
+        , d c (r+2), d (c+1) (r+2), d (c+2) (r+2)
+        , d c (r+3), d (c+1) (r+3), d (c+2) (r+3)
+        , d c (r+4), d (c+1) (r+4), d (c+2) (r+4)
+        , d c (r+5), d (c+1) (r+5), d (c+2) (r+5)
+        , d c (r+6), d (c+1) (r+6), d (c+2) (r+6)
+        , d c (r+7), d (c+1) (r+7), d (c+2) (r+7)
+        , d c (r+8), d (c+1) (r+8), d (c+2) (r+8)
+        ]
   KeyShapeB ->
     let
       d v u = Tb.set v u (Tb.Cell ' ' mempty (if p then Tb.red else Tb.black))
@@ -668,10 +681,10 @@ renderKey_ c r p = \case
 data Z a
   = Z [a] a [a]
 
-zfromList :: Int -> [a] -> Z a
-zfromList n = \case
+zfromList :: [a] -> Z a
+zfromList = \case
   (x:xs) ->
-    foldr (.) id (replicate n zright) (Z [] x xs)
+    Z [] x xs
   [] ->
     error "zfromList: empty list"
 
