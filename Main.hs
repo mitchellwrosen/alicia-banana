@@ -6,8 +6,11 @@
 import Control.Concurrent
 import Control.Exception (handle, throwIO)
 import Control.Monad
+import Data.Bifunctor (second)
 import Data.Foldable
+import Data.Function (on)
 import Data.IntMap (IntMap)
+import Data.List (deleteBy)
 import Data.Map (Map)
 import Data.Maybe
 import Reactive.Banana
@@ -45,10 +48,16 @@ main = do
 
     let
       play :: Key -> IO ()
-      play i =
-        fromMaybe (pure ()) (IntMap.lookup (fromEnum i) notes)
+      play k =
+        fromMaybe (pure ()) (IntMap.lookup (fromEnum k) notes)
 
-    Tb.main (Tb.InputModeEsc Tb.MouseModeNo) Tb.OutputModeNormal (main' play)
+    Tb.main inputMode outputMode $ \eEvent _bSize -> mdo
+      InterfaceOut ePianoInput eDone bScene <-
+        makeInterface (InterfaceIn eEvent ePianoOutput bPianoView)
+      PianoOut ePianoOutput bPianoView <-
+        makePiano play ePianoInput
+      pure (bScene, eDone)
+
     for_ chunks SDL.Mixer.free
 
   SDL.Mixer.quit
@@ -61,6 +70,14 @@ main = do
       , SDL.Mixer.audioFormat    = SDL.Mixer.FormatS16_Sys
       , SDL.Mixer.audioOutput    = SDL.Mixer.Stereo
       }
+
+  inputMode :: Tb.InputMode
+  inputMode =
+    Tb.InputModeEsc Tb.MouseModeNo
+
+  outputMode :: Tb.OutputMode
+  outputMode =
+    Tb.OutputModeNormal
 
 data InterfaceIn
   = InterfaceIn
@@ -89,18 +106,6 @@ data PianoOutput
 
 newtype PianoView
   = PianoView [Key]
-
-main'
-  :: (Key -> IO ())
-  -> Event Tb.Event
-  -> Behavior (Int, Int)
-  -> MomentIO (Behavior Tb.Scene, Event ())
-main' play eEvent _bSize = mdo
-  InterfaceOut ePianoInput eDone bScene <-
-    makeInterface (InterfaceIn eEvent ePianoOutput bPianoView)
-  PianoOut ePianoOutput bPianoView <-
-    makePiano play ePianoInput
-  pure (bScene, eDone)
 
 makeInterface
   :: InterfaceIn
@@ -191,156 +196,43 @@ makePiano play ePianoInput = do
         Play key -> Just key
         Tick     -> Nothing
 
-  let
-    bKeyGen :: MonadMoment m => Key -> m (Behavior Int)
-    bKeyGen k = mdo
-      bKey :: Behavior Int <-
-        stepper (0::Int)
-          (unionWith const
-            (2 <$ filterE (== k) ePlay)
-            (filterJust
-              ((\n ->
-                if n > 0
-                  then Just (n - 1)
-                  else Nothing)
-                <$> bKey
-                <@ eTick)))
-      pure bKey
+  rec
+    bPiano :: Behavior [(Key, Int)] <- do
+      let
+        eTicked :: Event [(Key, Int)]
+        eTicked =
+          filterJust (f <$> bPiano <@ eTick)
+         where
+          f :: [(Key, Int)] -> Maybe [(Key, Int)]
+          f = \case
+            [] ->
+              Nothing
+            ks ->
+              (Just . map dec . filter pressed) ks
+           where
+            dec :: (Key, Int) -> (Key, Int)
+            dec =
+              second (subtract 1)
 
-  bA0  <- bKeyGen A0
-  bAs0 <- bKeyGen As0
-  bB0  <- bKeyGen B0
-  bC1  <- bKeyGen C1
-  bCs1 <- bKeyGen Cs1
-  bD1  <- bKeyGen D1
-  bDs1 <- bKeyGen Ds1
-  bE1  <- bKeyGen E1
-  bF1  <- bKeyGen F1
-  bFs1 <- bKeyGen Fs1
-  bG1  <- bKeyGen G1
-  bGs1 <- bKeyGen Gs1
-  bA1  <- bKeyGen A1
-  bAs1 <- bKeyGen As1
-  bB1  <- bKeyGen B1
-  bC2  <- bKeyGen C2
-  bCs2 <- bKeyGen Cs2
-  bD2  <- bKeyGen D2
-  bDs2 <- bKeyGen Ds2
-  bE2  <- bKeyGen E2
-  bF2  <- bKeyGen F2
-  bFs2 <- bKeyGen Fs2
-  bG2  <- bKeyGen G2
-  bGs2 <- bKeyGen Gs2
-  bA2  <- bKeyGen A2
-  bAs2 <- bKeyGen As2
-  bB2  <- bKeyGen B2
-  bC3  <- bKeyGen C3
-  bCs3 <- bKeyGen Cs3
-  bD3  <- bKeyGen D3
-  bDs3 <- bKeyGen Ds3
-  bE3  <- bKeyGen E3
-  bF3  <- bKeyGen F3
-  bFs3 <- bKeyGen Fs3
-  bG3  <- bKeyGen G3
-  bGs3 <- bKeyGen Gs3
-  bA3  <- bKeyGen A3
-  bAs3 <- bKeyGen As3
-  bB3  <- bKeyGen B3
-  bC4  <- bKeyGen C4
-  bCs4 <- bKeyGen Cs4
-  bD4  <- bKeyGen D4
-  bDs4 <- bKeyGen Ds4
-  bE4  <- bKeyGen E4
-  bF4  <- bKeyGen F4
-  bFs4 <- bKeyGen Fs4
-  bG4  <- bKeyGen G4
-  bGs4 <- bKeyGen Gs4
-  bA4  <- bKeyGen A4
-  bAs4 <- bKeyGen As4
-  bB4  <- bKeyGen B4
-  bC5  <- bKeyGen C5
-  bCs5 <- bKeyGen Cs5
-  bD5  <- bKeyGen D5
-  bDs5 <- bKeyGen Ds5
-  bE5  <- bKeyGen E5
-  bF5  <- bKeyGen F5
-  bFs5 <- bKeyGen Fs5
-  bG5  <- bKeyGen G5
-  bGs5 <- bKeyGen Gs5
-  bA5  <- bKeyGen A5
-  bAs5 <- bKeyGen As5
-  bB5  <- bKeyGen B5
-  bC6  <- bKeyGen C6
-  bCs6 <- bKeyGen Cs6
-  bD6  <- bKeyGen D6
-  bDs6 <- bKeyGen Ds6
-  bE6  <- bKeyGen E6
-  bF6  <- bKeyGen F6
-  bFs6 <- bKeyGen Fs6
-  bG6  <- bKeyGen G6
-  bGs6 <- bKeyGen Gs6
-  bA6  <- bKeyGen A6
-  bAs6 <- bKeyGen As6
-  bB6  <- bKeyGen B6
-  bC7  <- bKeyGen C7
-  bCs7 <- bKeyGen Cs7
-  bD7  <- bKeyGen D7
-  bDs7 <- bKeyGen Ds7
-  bE7  <- bKeyGen E7
-  bF7  <- bKeyGen F7
-  bFs7 <- bKeyGen Fs7
-  bG7  <- bKeyGen G7
-  bGs7 <- bKeyGen Gs7
-  bA7  <- bKeyGen A7
-  bAs7 <- bKeyGen As7
-  bB7  <- bKeyGen B7
-  bC8  <- bKeyGen C8
+            pressed :: (Key, Int) -> Bool
+            pressed =
+              (> 1) . snd
 
-  let
-    bPiano :: Behavior Piano
-    bPiano =
-      Piano
-        <$> bA0  <*> bAs0 <*> bB0  <*> bC1  <*> bCs1 <*> bD1  <*> bDs1 <*> bE1
-        <*> bF1  <*> bFs1 <*> bG1  <*> bGs1 <*> bA1  <*> bAs1 <*> bB1  <*> bC2
-        <*> bCs2 <*> bD2  <*> bDs2 <*> bE2  <*> bF2  <*> bFs2 <*> bG2  <*> bGs2
-        <*> bA2  <*> bAs2 <*> bB2  <*> bC3  <*> bCs3 <*> bD3  <*> bDs3 <*> bE3
-        <*> bF3  <*> bFs3 <*> bG3  <*> bGs3 <*> bA3  <*> bAs3 <*> bB3  <*> bC4
-        <*> bCs4 <*> bD4  <*> bDs4 <*> bE4  <*> bF4  <*> bFs4 <*> bG4  <*> bGs4
-        <*> bA4  <*> bAs4 <*> bB4  <*> bC5  <*> bCs5 <*> bD5  <*> bDs5 <*> bE5
-        <*> bF5  <*> bFs5 <*> bG5  <*> bGs5 <*> bA5  <*> bAs5 <*> bB5  <*> bC6
-        <*> bCs6 <*> bD6  <*> bDs6 <*> bE6  <*> bF6  <*> bFs6 <*> bG6  <*> bGs6
-        <*> bA6  <*> bAs6 <*> bB6  <*> bC7  <*> bCs7 <*> bD7  <*> bDs7 <*> bE7
-        <*> bF7  <*> bFs7 <*> bG7  <*> bGs7 <*> bA7  <*> bAs7 <*> bB7  <*> bC8
+      let
+        ePlayed :: Event [(Key, Int)]
+        ePlayed =
+          f <$> bPiano <@> ePlay
+         where
+          f :: [(Key, Int)] -> Key -> [(Key, Int)]
+          f ks k =
+            (k, 2) : deleteBy ((==) `on` fst) (k, undefined) ks
+
+      stepper [] (unionWith const eTicked ePlayed)
 
   let
     bPianoView :: Behavior PianoView
     bPianoView =
-      viewPiano <$> bPiano
-     where
-      viewPiano :: Piano -> PianoView
-      viewPiano (Piano a0 as0 b0
-                       c1 cs1 d1 ds1 e1 f1 fs1 g1 gs1 a1 as1 b1
-                       c2 cs2 d2 ds2 e2 f2 fs2 g2 gs2 a2 as2 b2
-                       c3 cs3 d3 ds3 e3 f3 fs3 g3 gs3 a3 as3 b3
-                       c4 cs4 d4 ds4 e4 f4 fs4 g4 gs4 a4 as4 b4
-                       c5 cs5 d5 ds5 e5 f5 fs5 g5 gs5 a5 as5 b5
-                       c6 cs6 d6 ds6 e6 f6 fs6 g6 gs6 a6 as6 b6
-                       c7 cs7 d7 ds7 e7 f7 fs7 g7 gs7 a7 as7 b7
-                       c8) =
-        (PianoView . catMaybes)
-          (zipWith
-            (\n k -> if n > 0 then Just k else Nothing)
-            [ a0, as0, b0
-            , c1, cs1, d1, ds1, e1, f1, fs1, g1, gs1, a1, as1, b1
-            , c2, cs2, d2, ds2, e2, f2, fs2, g2, gs2, a2, as2, b2
-            , c3, cs3, d3, ds3, e3, f3, fs3, g3, gs3, a3, as3, b3
-            , c4, cs4, d4, ds4, e4, f4, fs4, g4, gs4, a4, as4, b4
-            , c5, cs5, d5, ds5, e5, f5, fs5, g5, gs5, a5, as5, b5
-            , c6, cs6, d6, ds6, e6, f6, fs6, g6, gs6, a6, as6, b6
-            , c7, cs7, d7, ds7, e7, f7, fs7, g7, gs7, a7, as7, b7
-            , c8
-            ]
-            [minBound..maxBound])
+      PianoView . map fst <$> bPiano
 
   reactimate (play <$> ePlay)
 
@@ -357,6 +249,188 @@ data Key
   | C7 | Cs7 | D7 | Ds7 | E7 | F7 | Fs7 | G7 | Gs7 | A7 | As7 | B7
   | C8
   deriving (Bounded, Enum, Eq, Ord)
+
+keyOffset :: Key -> Int
+keyOffset = \case
+  A0  -> 0
+  As0 -> 2
+  B0  -> 3
+  C1  -> 6
+  Cs1 -> 8
+  D1  -> 9
+  Ds1 -> 11
+  E1  -> 12
+  F1  -> 15
+  Fs1 -> 17
+  G1  -> 18
+  Gs1 -> 20
+  A1  -> 21
+  As1 -> 23
+  B1  -> 24
+  C2  -> 27
+  Cs2 -> 29
+  D2  -> 30
+  Ds2 -> 32
+  E2  -> 33
+  F2  -> 36
+  Fs2 -> 38
+  G2  -> 39
+  Gs2 -> 41
+  A2  -> 42
+  As2 -> 44
+  B2  -> 45
+  C3  -> 48
+  Cs3 -> 50
+  D3  -> 51
+  Ds3 -> 53
+  E3  -> 54
+  F3  -> 57
+  Fs3 -> 59
+  G3  -> 60
+  Gs3 -> 62
+  A3  -> 63
+  As3 -> 65
+  B3  -> 66
+  C4  -> 69
+  Cs4 -> 71
+  D4  -> 72
+  Ds4 -> 74
+  E4  -> 75
+  F4  -> 78
+  Fs4 -> 80
+  G4  -> 81
+  Gs4 -> 83
+  A4  -> 84
+  As4 -> 86
+  B4  -> 87
+  C5  -> 90
+  Cs5 -> 92
+  D5  -> 93
+  Ds5 -> 95
+  E5  -> 96
+  F5  -> 99
+  Fs5 -> 101
+  G5  -> 102
+  Gs5 -> 104
+  A5  -> 105
+  As5 -> 107
+  B5  -> 108
+  C6  -> 111
+  Cs6 -> 113
+  D6  -> 114
+  Ds6 -> 116
+  E6  -> 117
+  F6  -> 120
+  Fs6 -> 122
+  G6  -> 123
+  Gs6 -> 125
+  A6  -> 126
+  As6 -> 128
+  B6  -> 129
+  C7  -> 132
+  Cs7 -> 134
+  D7  -> 135
+  Ds7 -> 137
+  E7  -> 138
+  F7  -> 141
+  Fs7 -> 143
+  G7  -> 144
+  Gs7 -> 146
+  A7  -> 147
+  As7 -> 149
+  B7  -> 150
+  C8  -> 153
+
+keyShape :: Key -> KeyShape
+keyShape = \case
+  A0  -> KeyShapeU
+  As0 -> KeyShapeB
+  B0  -> KeyShapeR
+  C1  -> KeyShapeL
+  Cs1 -> KeyShapeB
+  D1  -> KeyShapeU
+  Ds1 -> KeyShapeB
+  E1  -> KeyShapeR
+  F1  -> KeyShapeL
+  Fs1 -> KeyShapeB
+  G1  -> KeyShapeU
+  Gs1 -> KeyShapeB
+  A1  -> KeyShapeU
+  As1 -> KeyShapeB
+  B1  -> KeyShapeR
+  C2  -> KeyShapeL
+  Cs2 -> KeyShapeB
+  D2  -> KeyShapeU
+  Ds2 -> KeyShapeB
+  E2  -> KeyShapeR
+  F2  -> KeyShapeL
+  Fs2 -> KeyShapeB
+  G2  -> KeyShapeU
+  Gs2 -> KeyShapeB
+  A2  -> KeyShapeU
+  As2 -> KeyShapeB
+  B2  -> KeyShapeR
+  C3  -> KeyShapeL
+  Cs3 -> KeyShapeB
+  D3  -> KeyShapeU
+  Ds3 -> KeyShapeB
+  E3  -> KeyShapeR
+  F3  -> KeyShapeL
+  Fs3 -> KeyShapeB
+  G3  -> KeyShapeU
+  Gs3 -> KeyShapeB
+  A3  -> KeyShapeU
+  As3 -> KeyShapeB
+  B3  -> KeyShapeR
+  C4  -> KeyShapeL
+  Cs4 -> KeyShapeB
+  D4  -> KeyShapeU
+  Ds4 -> KeyShapeB
+  E4  -> KeyShapeR
+  F4  -> KeyShapeL
+  Fs4 -> KeyShapeB
+  G4  -> KeyShapeU
+  Gs4 -> KeyShapeB
+  A4  -> KeyShapeU
+  As4 -> KeyShapeB
+  B4  -> KeyShapeR
+  C5  -> KeyShapeL
+  Cs5 -> KeyShapeB
+  D5  -> KeyShapeU
+  Ds5 -> KeyShapeB
+  E5  -> KeyShapeR
+  F5  -> KeyShapeL
+  Fs5 -> KeyShapeB
+  G5  -> KeyShapeU
+  Gs5 -> KeyShapeB
+  A5  -> KeyShapeU
+  As5 -> KeyShapeB
+  B5  -> KeyShapeR
+  C6  -> KeyShapeL
+  Cs6 -> KeyShapeB
+  D6  -> KeyShapeU
+  Ds6 -> KeyShapeB
+  E6  -> KeyShapeR
+  F6  -> KeyShapeL
+  Fs6 -> KeyShapeB
+  G6  -> KeyShapeU
+  Gs6 -> KeyShapeB
+  A6  -> KeyShapeU
+  As6 -> KeyShapeB
+  B6  -> KeyShapeR
+  C7  -> KeyShapeL
+  Cs7 -> KeyShapeB
+  D7  -> KeyShapeU
+  Ds7 -> KeyShapeB
+  E7  -> KeyShapeR
+  F7  -> KeyShapeL
+  Fs7 -> KeyShapeB
+  G7  -> KeyShapeU
+  Gs7 -> KeyShapeB
+  A7  -> KeyShapeU
+  As7 -> KeyShapeB
+  B7  -> KeyShapeR
+  C8  -> KeyShapeL
 
 data KeyShape
   = KeyShapeB
@@ -514,17 +588,6 @@ renderKeyBindings = \case
   black c0 (c, x) =
     Tb.set (c0+c) 4 (Tb.Cell x Tb.white Tb.black)
 
-data Piano
-  = Piano !Int !Int !Int
-          !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int
-          !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int
-          !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int
-          !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int
-          !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int
-          !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int
-          !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int
-          !Int
-
 renderPiano :: PianoView -> Tb.Cells
 renderPiano (PianoView keys) =
   foldMap (\k -> renderKey 0 0 (k, k `elem` keys)) [minBound..maxBound]
@@ -539,188 +602,6 @@ renderPiano (PianoView keys) =
         key <- [minBound..maxBound]
         p   <- [False, True]
         pure ((key, p), renderKey_ (c0 + keyOffset key) r0 p (keyShape key))
-
-    keyOffset :: Key -> Int
-    keyOffset = \case
-      A0  -> 0
-      As0 -> 2
-      B0  -> 3
-      C1  -> 6
-      Cs1 -> 8
-      D1  -> 9
-      Ds1 -> 11
-      E1  -> 12
-      F1  -> 15
-      Fs1 -> 17
-      G1  -> 18
-      Gs1 -> 20
-      A1  -> 21
-      As1 -> 23
-      B1  -> 24
-      C2  -> 27
-      Cs2 -> 29
-      D2  -> 30
-      Ds2 -> 32
-      E2  -> 33
-      F2  -> 36
-      Fs2 -> 38
-      G2  -> 39
-      Gs2 -> 41
-      A2  -> 42
-      As2 -> 44
-      B2  -> 45
-      C3  -> 48
-      Cs3 -> 50
-      D3  -> 51
-      Ds3 -> 53
-      E3  -> 54
-      F3  -> 57
-      Fs3 -> 59
-      G3  -> 60
-      Gs3 -> 62
-      A3  -> 63
-      As3 -> 65
-      B3  -> 66
-      C4  -> 69
-      Cs4 -> 71
-      D4  -> 72
-      Ds4 -> 74
-      E4  -> 75
-      F4  -> 78
-      Fs4 -> 80
-      G4  -> 81
-      Gs4 -> 83
-      A4  -> 84
-      As4 -> 86
-      B4  -> 87
-      C5  -> 90
-      Cs5 -> 92
-      D5  -> 93
-      Ds5 -> 95
-      E5  -> 96
-      F5  -> 99
-      Fs5 -> 101
-      G5  -> 102
-      Gs5 -> 104
-      A5  -> 105
-      As5 -> 107
-      B5  -> 108
-      C6  -> 111
-      Cs6 -> 113
-      D6  -> 114
-      Ds6 -> 116
-      E6  -> 117
-      F6  -> 120
-      Fs6 -> 122
-      G6  -> 123
-      Gs6 -> 125
-      A6  -> 126
-      As6 -> 128
-      B6  -> 129
-      C7  -> 132
-      Cs7 -> 134
-      D7  -> 135
-      Ds7 -> 137
-      E7  -> 138
-      F7  -> 141
-      Fs7 -> 143
-      G7  -> 144
-      Gs7 -> 146
-      A7  -> 147
-      As7 -> 149
-      B7  -> 150
-      C8  -> 153
-
-    keyShape :: Key -> KeyShape
-    keyShape = \case
-      A0  -> KeyShapeU
-      As0 -> KeyShapeB
-      B0  -> KeyShapeR
-      C1  -> KeyShapeL
-      Cs1 -> KeyShapeB
-      D1  -> KeyShapeU
-      Ds1 -> KeyShapeB
-      E1  -> KeyShapeR
-      F1  -> KeyShapeL
-      Fs1 -> KeyShapeB
-      G1  -> KeyShapeU
-      Gs1 -> KeyShapeB
-      A1  -> KeyShapeU
-      As1 -> KeyShapeB
-      B1  -> KeyShapeR
-      C2  -> KeyShapeL
-      Cs2 -> KeyShapeB
-      D2  -> KeyShapeU
-      Ds2 -> KeyShapeB
-      E2  -> KeyShapeR
-      F2  -> KeyShapeL
-      Fs2 -> KeyShapeB
-      G2  -> KeyShapeU
-      Gs2 -> KeyShapeB
-      A2  -> KeyShapeU
-      As2 -> KeyShapeB
-      B2  -> KeyShapeR
-      C3  -> KeyShapeL
-      Cs3 -> KeyShapeB
-      D3  -> KeyShapeU
-      Ds3 -> KeyShapeB
-      E3  -> KeyShapeR
-      F3  -> KeyShapeL
-      Fs3 -> KeyShapeB
-      G3  -> KeyShapeU
-      Gs3 -> KeyShapeB
-      A3  -> KeyShapeU
-      As3 -> KeyShapeB
-      B3  -> KeyShapeR
-      C4  -> KeyShapeL
-      Cs4 -> KeyShapeB
-      D4  -> KeyShapeU
-      Ds4 -> KeyShapeB
-      E4  -> KeyShapeR
-      F4  -> KeyShapeL
-      Fs4 -> KeyShapeB
-      G4  -> KeyShapeU
-      Gs4 -> KeyShapeB
-      A4  -> KeyShapeU
-      As4 -> KeyShapeB
-      B4  -> KeyShapeR
-      C5  -> KeyShapeL
-      Cs5 -> KeyShapeB
-      D5  -> KeyShapeU
-      Ds5 -> KeyShapeB
-      E5  -> KeyShapeR
-      F5  -> KeyShapeL
-      Fs5 -> KeyShapeB
-      G5  -> KeyShapeU
-      Gs5 -> KeyShapeB
-      A5  -> KeyShapeU
-      As5 -> KeyShapeB
-      B5  -> KeyShapeR
-      C6  -> KeyShapeL
-      Cs6 -> KeyShapeB
-      D6  -> KeyShapeU
-      Ds6 -> KeyShapeB
-      E6  -> KeyShapeR
-      F6  -> KeyShapeL
-      Fs6 -> KeyShapeB
-      G6  -> KeyShapeU
-      Gs6 -> KeyShapeB
-      A6  -> KeyShapeU
-      As6 -> KeyShapeB
-      B6  -> KeyShapeR
-      C7  -> KeyShapeL
-      Cs7 -> KeyShapeB
-      D7  -> KeyShapeU
-      Ds7 -> KeyShapeB
-      E7  -> KeyShapeR
-      F7  -> KeyShapeL
-      Fs7 -> KeyShapeB
-      G7  -> KeyShapeU
-      Gs7 -> KeyShapeB
-      A7  -> KeyShapeU
-      As7 -> KeyShapeB
-      B7  -> KeyShapeR
-      C8  -> KeyShapeL
 
 renderKey_ :: Int -> Int -> Bool -> KeyShape -> Tb.Cells
 renderKey_ c r p = \case
