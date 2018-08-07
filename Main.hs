@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase, OverloadedStrings, PatternSynonyms, RecursiveDo,
-             ScopedTypeVariables #-}
+             ScopedTypeVariables, TupleSections #-}
+
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 import Control.Concurrent
@@ -7,6 +8,7 @@ import Control.Exception (handle, throwIO)
 import Control.Monad
 import Data.Foldable
 import Data.IntMap (IntMap)
+import Data.Map (Map)
 import Data.Maybe
 import Reactive.Banana
 import Reactive.Banana.Frameworks
@@ -17,6 +19,8 @@ import qualified Data.Map as Map
 import qualified SDL
 import qualified SDL.Mixer
 import qualified Termbox.Banana as Tb
+
+-- TODO Render pressed key better (same background in binding)
 
 main :: IO ()
 main = do
@@ -83,9 +87,8 @@ data PianoInput
 data PianoOutput
   = PianoOutput
 
-type PianoView
-  = Piano
-  -- TODO Don't provide the whole piano, only a view
+newtype PianoView
+  = PianoView [Key]
 
 main'
   :: (Key -> IO ())
@@ -149,7 +152,7 @@ makeInterface (InterfaceIn eEvent _ePianoOutput bPianoView) = do
   let
     ePlay :: Event Key
     ePlay =
-      filterJust (keyBindingsToKey <$> bKeyBindings <@> eKeyChar)
+      filterJust (readKey <$> bKeyBindings <@> eKeyChar)
 
   let
     ePianoInput :: Event PianoInput
@@ -309,9 +312,39 @@ makePiano play ePianoInput = do
         <*> bA6  <*> bAs6 <*> bB6  <*> bC7  <*> bCs7 <*> bD7  <*> bDs7 <*> bE7
         <*> bF7  <*> bFs7 <*> bG7  <*> bGs7 <*> bA7  <*> bAs7 <*> bB7  <*> bC8
 
+  let
+    bPianoView :: Behavior PianoView
+    bPianoView =
+      viewPiano <$> bPiano
+     where
+      viewPiano :: Piano -> PianoView
+      viewPiano (Piano a0 as0 b0
+                       c1 cs1 d1 ds1 e1 f1 fs1 g1 gs1 a1 as1 b1
+                       c2 cs2 d2 ds2 e2 f2 fs2 g2 gs2 a2 as2 b2
+                       c3 cs3 d3 ds3 e3 f3 fs3 g3 gs3 a3 as3 b3
+                       c4 cs4 d4 ds4 e4 f4 fs4 g4 gs4 a4 as4 b4
+                       c5 cs5 d5 ds5 e5 f5 fs5 g5 gs5 a5 as5 b5
+                       c6 cs6 d6 ds6 e6 f6 fs6 g6 gs6 a6 as6 b6
+                       c7 cs7 d7 ds7 e7 f7 fs7 g7 gs7 a7 as7 b7
+                       c8) =
+        (PianoView . catMaybes)
+          (zipWith
+            (\n k -> if n > 0 then Just k else Nothing)
+            [ a0, as0, b0
+            , c1, cs1, d1, ds1, e1, f1, fs1, g1, gs1, a1, as1, b1
+            , c2, cs2, d2, ds2, e2, f2, fs2, g2, gs2, a2, as2, b2
+            , c3, cs3, d3, ds3, e3, f3, fs3, g3, gs3, a3, as3, b3
+            , c4, cs4, d4, ds4, e4, f4, fs4, g4, gs4, a4, as4, b4
+            , c5, cs5, d5, ds5, e5, f5, fs5, g5, gs5, a5, as5, b5
+            , c6, cs6, d6, ds6, e6, f6, fs6, g6, gs6, a6, as6, b6
+            , c7, cs7, d7, ds7, e7, f7, fs7, g7, gs7, a7, as7, b7
+            , c8
+            ]
+            [minBound..maxBound])
+
   reactimate (play <$> ePlay)
 
-  pure (PianoOut never bPiano)
+  pure (PianoOut never bPianoView)
 
 data Key
   = A0 | As0 | B0
@@ -323,7 +356,13 @@ data Key
   | C6 | Cs6 | D6 | Ds6 | E6 | F6 | Fs6 | G6 | Gs6 | A6 | As6 | B6
   | C7 | Cs7 | D7 | Ds7 | E7 | F7 | Fs7 | G7 | Gs7 | A7 | As7 | B7
   | C8
-  deriving (Bounded, Enum, Eq)
+  deriving (Bounded, Enum, Eq, Ord)
+
+data KeyShape
+  = KeyShapeB
+  | KeyShapeL
+  | KeyShapeR
+  | KeyShapeU
 
 data KeyBindings
   = KeyBindingsA0
@@ -359,8 +398,8 @@ data KeyBindings
   | KeyBindingsC5
   deriving (Bounded, Enum)
 
-keyBindingsToKey :: KeyBindings -> Char -> Maybe Key
-keyBindingsToKey = \case
+readKey :: KeyBindings -> Char -> Maybe Key
+readKey = \case
   KeyBindingsA0  -> flip Map.lookup (Map.fromList (zip keysA  [A0  ..]))
   KeyBindingsAs0 -> flip Map.lookup (Map.fromList (zip keysAs [As0 ..]))
   KeyBindingsC1  -> flip Map.lookup (Map.fromList (zip keysC  [C1  ..]))
@@ -486,108 +525,264 @@ data Piano
           !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int
           !Int
 
-renderPiano :: Piano -> Tb.Cells
-renderPiano (Piano a0 as0 b0
-                   c1 cs1 d1 ds1 e1 f1 fs1 g1 gs1 a1 as1 b1
-                   c2 cs2 d2 ds2 e2 f2 fs2 g2 gs2 a2 as2 b2
-                   c3 cs3 d3 ds3 e3 f3 fs3 g3 gs3 a3 as3 b3
-                   c4 cs4 d4 ds4 e4 f4 fs4 g4 gs4 a4 as4 b4
-                   c5 cs5 d5 ds5 e5 f5 fs5 g5 gs5 a5 as5 b5
-                   c6 cs6 d6 ds6 e6 f6 fs6 g6 gs6 a6 as6 b6
-                   c7 cs7 d7 ds7 e7 f7 fs7 g7 gs7 a7 as7 b7
-                   c8) =
+renderPiano :: PianoView -> Tb.Cells
+renderPiano (PianoView keys) =
+  foldMap (\k -> renderKey 0 0 (k, k `elem` keys)) [minBound..maxBound]
+ where
+  renderKey :: Int -> Int -> (Key, Bool) -> Tb.Cells
+  renderKey c0 r0 =
+    (fromMaybe mempty . flip Map.lookup m)
+   where
+    m :: Map (Key, Bool) Tb.Cells
+    m =
+      Map.fromList $ do
+        key <- [minBound..maxBound]
+        p   <- [False, True]
+        pure ((key, p), renderKey_ (c0 + keyOffset key) r0 p (keyShape key))
 
-  let
-    octave i c cs d ds e f fs g gs a as b =
+    keyOffset :: Key -> Int
+    keyOffset = \case
+      A0  -> 0
+      As0 -> 2
+      B0  -> 3
+      C1  -> 6
+      Cs1 -> 8
+      D1  -> 9
+      Ds1 -> 11
+      E1  -> 12
+      F1  -> 15
+      Fs1 -> 17
+      G1  -> 18
+      Gs1 -> 20
+      A1  -> 21
+      As1 -> 23
+      B1  -> 24
+      C2  -> 27
+      Cs2 -> 29
+      D2  -> 30
+      Ds2 -> 32
+      E2  -> 33
+      F2  -> 36
+      Fs2 -> 38
+      G2  -> 39
+      Gs2 -> 41
+      A2  -> 42
+      As2 -> 44
+      B2  -> 45
+      C3  -> 48
+      Cs3 -> 50
+      D3  -> 51
+      Ds3 -> 53
+      E3  -> 54
+      F3  -> 57
+      Fs3 -> 59
+      G3  -> 60
+      Gs3 -> 62
+      A3  -> 63
+      As3 -> 65
+      B3  -> 66
+      C4  -> 69
+      Cs4 -> 71
+      D4  -> 72
+      Ds4 -> 74
+      E4  -> 75
+      F4  -> 78
+      Fs4 -> 80
+      G4  -> 81
+      Gs4 -> 83
+      A4  -> 84
+      As4 -> 86
+      B4  -> 87
+      C5  -> 90
+      Cs5 -> 92
+      D5  -> 93
+      Ds5 -> 95
+      E5  -> 96
+      F5  -> 99
+      Fs5 -> 101
+      G5  -> 102
+      Gs5 -> 104
+      A5  -> 105
+      As5 -> 107
+      B5  -> 108
+      C6  -> 111
+      Cs6 -> 113
+      D6  -> 114
+      Ds6 -> 116
+      E6  -> 117
+      F6  -> 120
+      Fs6 -> 122
+      G6  -> 123
+      Gs6 -> 125
+      A6  -> 126
+      As6 -> 128
+      B6  -> 129
+      C7  -> 132
+      Cs7 -> 134
+      D7  -> 135
+      Ds7 -> 137
+      E7  -> 138
+      F7  -> 141
+      Fs7 -> 143
+      G7  -> 144
+      Gs7 -> 146
+      A7  -> 147
+      As7 -> 149
+      B7  -> 150
+      C8  -> 153
+
+    keyShape :: Key -> KeyShape
+    keyShape = \case
+      A0  -> KeyShapeU
+      As0 -> KeyShapeB
+      B0  -> KeyShapeR
+      C1  -> KeyShapeL
+      Cs1 -> KeyShapeB
+      D1  -> KeyShapeU
+      Ds1 -> KeyShapeB
+      E1  -> KeyShapeR
+      F1  -> KeyShapeL
+      Fs1 -> KeyShapeB
+      G1  -> KeyShapeU
+      Gs1 -> KeyShapeB
+      A1  -> KeyShapeU
+      As1 -> KeyShapeB
+      B1  -> KeyShapeR
+      C2  -> KeyShapeL
+      Cs2 -> KeyShapeB
+      D2  -> KeyShapeU
+      Ds2 -> KeyShapeB
+      E2  -> KeyShapeR
+      F2  -> KeyShapeL
+      Fs2 -> KeyShapeB
+      G2  -> KeyShapeU
+      Gs2 -> KeyShapeB
+      A2  -> KeyShapeU
+      As2 -> KeyShapeB
+      B2  -> KeyShapeR
+      C3  -> KeyShapeL
+      Cs3 -> KeyShapeB
+      D3  -> KeyShapeU
+      Ds3 -> KeyShapeB
+      E3  -> KeyShapeR
+      F3  -> KeyShapeL
+      Fs3 -> KeyShapeB
+      G3  -> KeyShapeU
+      Gs3 -> KeyShapeB
+      A3  -> KeyShapeU
+      As3 -> KeyShapeB
+      B3  -> KeyShapeR
+      C4  -> KeyShapeL
+      Cs4 -> KeyShapeB
+      D4  -> KeyShapeU
+      Ds4 -> KeyShapeB
+      E4  -> KeyShapeR
+      F4  -> KeyShapeL
+      Fs4 -> KeyShapeB
+      G4  -> KeyShapeU
+      Gs4 -> KeyShapeB
+      A4  -> KeyShapeU
+      As4 -> KeyShapeB
+      B4  -> KeyShapeR
+      C5  -> KeyShapeL
+      Cs5 -> KeyShapeB
+      D5  -> KeyShapeU
+      Ds5 -> KeyShapeB
+      E5  -> KeyShapeR
+      F5  -> KeyShapeL
+      Fs5 -> KeyShapeB
+      G5  -> KeyShapeU
+      Gs5 -> KeyShapeB
+      A5  -> KeyShapeU
+      As5 -> KeyShapeB
+      B5  -> KeyShapeR
+      C6  -> KeyShapeL
+      Cs6 -> KeyShapeB
+      D6  -> KeyShapeU
+      Ds6 -> KeyShapeB
+      E6  -> KeyShapeR
+      F6  -> KeyShapeL
+      Fs6 -> KeyShapeB
+      G6  -> KeyShapeU
+      Gs6 -> KeyShapeB
+      A6  -> KeyShapeU
+      As6 -> KeyShapeB
+      B6  -> KeyShapeR
+      C7  -> KeyShapeL
+      Cs7 -> KeyShapeB
+      D7  -> KeyShapeU
+      Ds7 -> KeyShapeB
+      E7  -> KeyShapeR
+      F7  -> KeyShapeL
+      Fs7 -> KeyShapeB
+      G7  -> KeyShapeU
+      Gs7 -> KeyShapeB
+      A7  -> KeyShapeU
+      As7 -> KeyShapeB
+      B7  -> KeyShapeR
+      C8  -> KeyShapeL
+
+renderKey_ :: Int -> Int -> Bool -> KeyShape -> Tb.Cells
+renderKey_ c r p = \case
+  KeyShapeL ->
+    let
+      d u v =
+        Tb.set u v (Tb.Cell ' ' mempty (if p then Tb.blue else Tb.white))
+    in
       mconcat
-        [ keyL i      r c
-        , keyB (i+2)  r cs
-        , keyU (i+3)  r d
-        , keyB (i+5)  r ds
-        , keyR (i+6)  r e
-        , keyL (i+9)  r f
-        , keyB (i+11) r fs
-        , keyU (i+12) r g
-        , keyB (i+14) r gs
-        , keyU (i+15) r a
-        , keyB (i+17) r as
-        , keyR (i+18) r b
+        [ d c r,     d (c+1) r
+        , d c (r+1), d (c+1) (r+1)
+        , d c (r+2), d (c+1) (r+2)
+        , d c (r+3), d (c+1) (r+3)
+        , d c (r+4), d (c+1) (r+4)
+        , d c (r+5), d (c+1) (r+5), d (c+2) (r+5)
+        , d c (r+6), d (c+1) (r+6), d (c+2) (r+6)
+        , d c (r+7), d (c+1) (r+7), d (c+2) (r+7)
+        , d c (r+8), d (c+1) (r+8), d (c+2) (r+8)
         ]
-  in
-    mconcat
-      [ keyU 0 r a0, keyB 2 r as0, keyR 3 r b0
-      , octave 6 c1 cs1 d1 ds1 e1 f1 fs1 g1 gs1 a1 as1 b1
-      , octave 27 c2 cs2 d2 ds2 e2 f2 fs2 g2 gs2 a2 as2 b2
-      , octave 48 c3 cs3 d3 ds3 e3 f3 fs3 g3 gs3 a3 as3 b3
-      , octave 69 c4 cs4 d4 ds4 e4 f4 fs4 g4 gs4 a4 as4 b4
-      , octave 90 c5 cs5 d5 ds5 e5 f5 fs5 g5 gs5 a5 as5 b5
-      , octave 111 c6 cs6 d6 ds6 e6 f6 fs6 g6 gs6 a6 as6 b6
-      , octave 132 c7 cs7 d7 ds7 e7 f7 fs7 g7 gs7 a7 as7 b7
-      , keyL 153 r c8
-      ]
- where
-  r = 0
-
-keyL :: Int -> Int -> Int -> Tb.Cells
-keyL c r p =
-  mconcat
-    [ d c r,     d (c+1) r
-    , d c (r+1), d (c+1) (r+1)
-    , d c (r+2), d (c+1) (r+2)
-    , d c (r+3), d (c+1) (r+3)
-    , d c (r+4), d (c+1) (r+4)
-    , d c (r+5), d (c+1) (r+5), d (c+2) (r+5)
-    , d c (r+6), d (c+1) (r+6), d (c+2) (r+6)
-    , d c (r+7), d (c+1) (r+7), d (c+2) (r+7)
-    , d c (r+8), d (c+1) (r+8), d (c+2) (r+8)
-    ]
- where
-  d u v = Tb.set u v (Tb.Cell ' ' mempty (if p>0 then Tb.blue else Tb.white))
-
-keyU :: Int -> Int -> Int -> Tb.Cells
-keyU c r p =
-  mconcat
-    [            d (c+1) r
-    ,            d (c+1) (r+1)
-    ,            d (c+1) (r+2)
-    ,            d (c+1) (r+3)
-    ,            d (c+1) (r+4)
-    , d c (r+5), d (c+1) (r+5), d (c+2) (r+5)
-    , d c (r+6), d (c+1) (r+6), d (c+2) (r+6)
-    , d c (r+7), d (c+1) (r+7), d (c+2) (r+7)
-    , d c (r+8), d (c+1) (r+8), d (c+2) (r+8)
-    ]
- where
-  d u v = Tb.set u v (Tb.Cell ' ' mempty (if p>0 then Tb.blue else Tb.white))
-
-keyR :: Int -> Int -> Int -> Tb.Cells
-keyR c r p =
-  mconcat
-    [            d (c+1) r    , d (c+2) r
-    ,            d (c+1) (r+1), d (c+2) (r+1)
-    ,            d (c+1) (r+2), d (c+2) (r+2)
-    ,            d (c+1) (r+3), d (c+2) (r+3)
-    ,            d (c+1) (r+4), d (c+2) (r+4)
-    , d c (r+5), d (c+1) (r+5), d (c+2) (r+5)
-    , d c (r+6), d (c+1) (r+6), d (c+2) (r+6)
-    , d c (r+7), d (c+1) (r+7), d (c+2) (r+7)
-    , d c (r+8), d (c+1) (r+8), d (c+2) (r+8)
-    ]
- where
-  d u v = Tb.set u v (Tb.Cell ' ' mempty (if p>0 then Tb.blue else Tb.white))
-
-keyB :: Int -> Int -> Int -> Tb.Cells
-keyB c r p =
-  mconcat
-    [ d c r,     d (c+1) r
-    , d c (r+1), d (c+1) (r+1)
-    , d c (r+2), d (c+1) (r+2)
-    , d c (r+3), d (c+1) (r+3)
-    , d c (r+4), d (c+1) (r+4)
-    ]
- where
-  d v u = Tb.set v u x
-  x = Tb.Cell ' ' mempty (if p>0 then Tb.red else Tb.black)
+  KeyShapeU ->
+    let
+      d u v =
+        Tb.set u v (Tb.Cell ' ' mempty (if p then Tb.blue else Tb.white))
+    in
+      mconcat
+        [            d (c+1) r
+        ,            d (c+1) (r+1)
+        ,            d (c+1) (r+2)
+        ,            d (c+1) (r+3)
+        ,            d (c+1) (r+4)
+        , d c (r+5), d (c+1) (r+5), d (c+2) (r+5)
+        , d c (r+6), d (c+1) (r+6), d (c+2) (r+6)
+        , d c (r+7), d (c+1) (r+7), d (c+2) (r+7)
+        , d c (r+8), d (c+1) (r+8), d (c+2) (r+8)
+        ]
+  KeyShapeR ->
+    let
+      d u v =
+        Tb.set u v (Tb.Cell ' ' mempty (if p then Tb.blue else Tb.white))
+    in
+      mconcat
+        [            d (c+1) r    , d (c+2) r
+        ,            d (c+1) (r+1), d (c+2) (r+1)
+        ,            d (c+1) (r+2), d (c+2) (r+2)
+        ,            d (c+1) (r+3), d (c+2) (r+3)
+        ,            d (c+1) (r+4), d (c+2) (r+4)
+        , d c (r+5), d (c+1) (r+5), d (c+2) (r+5)
+        , d c (r+6), d (c+1) (r+6), d (c+2) (r+6)
+        , d c (r+7), d (c+1) (r+7), d (c+2) (r+7)
+        , d c (r+8), d (c+1) (r+8), d (c+2) (r+8)
+        ]
+  KeyShapeB ->
+    let
+      d v u = Tb.set v u (Tb.Cell ' ' mempty (if p then Tb.red else Tb.black))
+    in
+      mconcat
+        [ d c r,     d (c+1) r
+        , d c (r+1), d (c+1) (r+1)
+        , d c (r+2), d (c+1) (r+2)
+        , d c (r+3), d (c+1) (r+3)
+        , d c (r+4), d (c+1) (r+4)
+        ]
 
 data Z a
   = Z [a] a [a]
