@@ -8,7 +8,7 @@ import Control.Exception (handle, throwIO)
 import Control.Monad
 import Data.Bifunctor (second)
 import Data.Foldable
-import Data.Function (on)
+import Data.Function ((&), on)
 import Data.IntMap (IntMap)
 import Data.List (deleteBy)
 import Data.Map (Map)
@@ -51,12 +51,12 @@ main = do
       play k =
         fromMaybe (pure ()) (IntMap.lookup (fromEnum k) notes)
 
-    Tb.main inputMode outputMode $ \eEvent _bSize -> mdo
+    Tb.run $ \(Tb.Inputs _size eKey _eSize _eMouse) -> mdo
       InterfaceOut ePianoInput eDone bScene <-
-        makeInterface (InterfaceIn eEvent ePianoOutput bPianoView)
+        makeInterface (InterfaceIn eKey ePianoOutput bPianoView)
       PianoOut ePianoOutput bPianoView <-
         makePiano play ePianoInput
-      pure (bScene, eDone)
+      pure (Tb.Outputs bScene eDone)
 
     for_ chunks SDL.Mixer.free
 
@@ -71,17 +71,9 @@ main = do
       , SDL.Mixer.audioOutput    = SDL.Mixer.Stereo
       }
 
-  inputMode :: Tb.InputMode
-  inputMode =
-    Tb.InputModeEsc Tb.MouseModeNo
-
-  outputMode :: Tb.OutputMode
-  outputMode =
-    Tb.OutputModeNormal
-
 data InterfaceIn
   = InterfaceIn
-      (Event Tb.Event)
+      (Event Tb.Key)
       (Event PianoOutput)
       (Behavior PianoView)
 
@@ -123,21 +115,21 @@ makeInterface (InterfaceIn eEvent _ePianoOutput bPianoView) = do
     eKeyChar =
       filterJust
         ((\case
-          Tb.EventKey (Tb.KeyChar c) _ -> Just c
+          Tb.KeyChar c -> Just c
           _ -> Nothing)
         <$> eEvent)
 
   let
     eDone :: Event ()
     eDone =
-      () <$ filterE (== Tb.EventKey Tb.KeyEsc False) eEvent
+      () <$ filterE (== Tb.KeyEsc) eEvent
 
   bKeyBindings :: Behavior KeyBindings <- do
     let
-      eLeft  = filterE (== Tb.EventKey Tb.KeyArrowLeft  False) eEvent
-      eRight = filterE (== Tb.EventKey Tb.KeyArrowRight False) eEvent
-      eDown  = filterE (== Tb.EventKey Tb.KeyArrowDown  False) eEvent
-      eUp    = filterE (== Tb.EventKey Tb.KeyArrowUp    False) eEvent
+      eLeft  = filterE (== Tb.KeyArrowLeft) eEvent
+      eRight = filterE (== Tb.KeyArrowRight) eEvent
+      eDown  = filterE (== Tb.KeyArrowDown) eEvent
+      eUp    = filterE (== Tb.KeyArrowUp) eEvent
     (fmap.fmap) zextract $
       accumB (iterate zright (zfromList [minBound..maxBound]) !! 13)
         (unions
@@ -160,12 +152,10 @@ makeInterface (InterfaceIn eEvent _ePianoOutput bPianoView) = do
   let
     bScene :: Behavior Tb.Scene
     bScene =
-      Tb.Scene
-        <$> mconcat
-              [ renderPiano <$> bPianoView
-              , renderKeyBindings <$> bKeyBindings
-              ]
-        <*> pure Tb.NoCursor
+      mconcat
+        [ renderPiano <$> bPianoView
+        , renderKeyBindings <$> bKeyBindings
+        ]
 
   pure (InterfaceOut ePianoInput eDone bScene)
 
@@ -509,7 +499,7 @@ readKey = \case
   keysFs = "azsxdcvgbhnmk,l.;/q2w3er5t6y7ui9o0p[=]"
   keysGs = "azsxcfvgbnjmk,l./'q2we4r5t6yu8i9op-[=]"
 
-renderKeyBindings :: KeyBindings -> Tb.Cells
+renderKeyBindings :: KeyBindings -> Tb.Scene
 renderKeyBindings = \case
   KeyBindingsA0  -> keyBindingsA   0
   KeyBindingsAs0 -> keyBindingsAs  2
@@ -544,7 +534,7 @@ renderKeyBindings = \case
   KeyBindingsC5  -> keyBindingsC  89
  where
   keyBindingsA, keyBindingsAs, keyBindingsC, keyBindingsCs, keyBindingsDs,
-    keyBindingsF :: Int -> Tb.Cells
+    keyBindingsF :: Int -> Tb.Scene
   keyBindingsA  c = whites (c+1) <> blacksA  (c+3)
   keyBindingsAs c = whites (c+2) <> blacksAs (c+1)
   keyBindingsC  c = whites (c+2) <> blacksC  (c+4)
@@ -554,7 +544,7 @@ renderKeyBindings = \case
   keyBindingsFs c = whites (c+3) <> blacksFs (c+2)
   keyBindingsGs c = whites (c+3) <> blacksGs (c+2)
 
-  blacksA, blacksAs, blacksC, blacksCs :: Int -> Tb.Cells
+  blacksA, blacksAs, blacksC, blacksCs :: Int -> Tb.Scene
   blacksA  = blacks [0,6,9,15,18,21,27,30,36,39,42,48,51,57,60]    "sfgjkl'245689-="
   blacksAs = blacks [0,6,9,15,18,21,27,30,36,39,42,48,51,57,60,63] "adfhjk;'345780-="
   blacksC  = blacks [0,3,9,12,15,21,24,30,33,36,42,45,51,54,57]    "sdghjl;2346790-"
@@ -564,35 +554,35 @@ renderKeyBindings = \case
   blacksFs = blacks [0,3,6,12,15,21,24,27,33,36,42,45,48,54,57,63] "asdghkl;2356790="
   blacksGs = blacks [0,3,9,12,18,21,24,30,33,39,42,45,51,54,60,63] "asfgjkl'245689-="
 
-  whites :: Int -> Tb.Cells
+  whites :: Int -> Tb.Scene
   whites c0 =
     foldMap
       (white c0)
       (zip [0,3..] "zxcvbnm,./qwertyuiop[]")
 
-  blacks :: [Int] -> [Char] -> Int -> Tb.Cells
+  blacks :: [Int] -> [Char] -> Int -> Tb.Scene
   blacks xs ys c0 =
     foldMap (black c0) (zip xs ys)
 
-  white :: Int -> (Int, Char) -> Tb.Cells
+  white :: Int -> (Int, Char) -> Tb.Scene
   white c0 (c, x) =
-    Tb.set (c0+c) 9 (Tb.Cell x Tb.black Tb.white)
+    Tb.cell (Tb.Pos 9 (c0+c)) (Tb.char x & Tb.fg (Tb.gray 0) & Tb.bg Tb.white)
 
-  black :: Int -> (Int, Char) -> Tb.Cells
+  black :: Int -> (Int, Char) -> Tb.Scene
   black c0 (c, x) =
-    Tb.set (c0+c) 5 (Tb.Cell x Tb.white Tb.black)
+    Tb.cell (Tb.Pos 5 (c0+c)) (Tb.char x & Tb.fg Tb.white & Tb.bg (Tb.gray 0))
 
-renderPiano :: PianoView -> Tb.Cells
+renderPiano :: PianoView -> Tb.Scene
 renderPiano (PianoView keys) =
-  foldMap (\c -> Tb.set c 0 (Tb.Cell ' ' mempty Tb.red)) [0..155]
+  foldMap (\c -> Tb.cell (Tb.Pos 0 c) (Tb.char ' ' & Tb.bg Tb.red)) [0..155]
   <>
   foldMap (\k -> renderKey 0 1 (k, k `elem` keys)) [minBound..maxBound]
  where
-  renderKey :: Int -> Int -> (Key, Bool) -> Tb.Cells
+  renderKey :: Int -> Int -> (Key, Bool) -> Tb.Scene
   renderKey c0 r0 =
     (fromMaybe mempty . flip Map.lookup m)
    where
-    m :: Map (Key, Bool) Tb.Cells
+    m :: Map (Key, Bool) Tb.Scene
     m =
       Map.fromList $ do
         key <- [minBound..maxBound]
@@ -600,12 +590,12 @@ renderPiano (PianoView keys) =
         pure ((key, p), renderKey_ (c0 + keyOffset key) r0 p (keyShape key))
 
 -- TODO clean this function up
-renderKey_ :: Int -> Int -> Bool -> KeyShape -> Tb.Cells
+renderKey_ :: Int -> Int -> Bool -> KeyShape -> Tb.Scene
 renderKey_ c r p = \case
   KeyShapeL ->
     let
       d u v =
-        Tb.set u v (Tb.Cell ' ' mempty (if p then Tb.blue else Tb.white))
+        Tb.cell (Tb.Pos v u) (Tb.char ' ' & Tb.bg (if p then Tb.blue else Tb.white))
     in
       mconcat
         [ d c r,     d (c+1) r
@@ -621,7 +611,7 @@ renderKey_ c r p = \case
   KeyShapeU ->
     let
       d u v =
-        Tb.set u v (Tb.Cell ' ' mempty (if p then Tb.blue else Tb.white))
+        Tb.cell (Tb.Pos v u) (Tb.char ' ' & Tb.bg (if p then Tb.blue else Tb.white))
     in
       mconcat
         [            d (c+1) r
@@ -637,7 +627,7 @@ renderKey_ c r p = \case
   KeyShapeR ->
     let
       d u v =
-        Tb.set u v (Tb.Cell ' ' mempty (if p then Tb.blue else Tb.white))
+        Tb.cell (Tb.Pos v u) (Tb.char ' ' & Tb.bg (if p then Tb.blue else Tb.white))
     in
       mconcat
         [            d (c+1) r    , d (c+2) r
@@ -653,7 +643,7 @@ renderKey_ c r p = \case
   KeyShapeW ->
     let
       d u v =
-        Tb.set u v (Tb.Cell ' ' mempty (if p then Tb.blue else Tb.white))
+        Tb.cell (Tb.Pos v u) (Tb.char ' ' & Tb.bg (if p then Tb.blue else Tb.white))
     in
       mconcat
         [ d c r,     d (c+1) r    , d (c+2) r
@@ -668,7 +658,7 @@ renderKey_ c r p = \case
         ]
   KeyShapeB ->
     let
-      d v u = Tb.set v u (Tb.Cell ' ' mempty (if p then Tb.red else Tb.black))
+      d v u = Tb.cell (Tb.Pos u v) (Tb.char ' ' & Tb.bg (if p then Tb.red else Tb.gray 0))
     in
       mconcat
         [ d c r,     d (c+1) r
@@ -781,9 +771,3 @@ pianoFiles =
 
 pattern NoFreeChannels :: SDL.SDLException
 pattern NoFreeChannels <- SDL.SDLCallFailed { SDL.sdlExceptionError = "No free channels available" }
-
-instance Monoid a => Monoid (Behavior a) where
-  mempty = pure mempty
-
-instance Semigroup a => Semigroup (Behavior a) where
-  (<>) = liftA2 (<>)
