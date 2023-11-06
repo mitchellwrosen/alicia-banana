@@ -5,12 +5,13 @@ version: 0
 
 executable alicia-banana
   build-depends:
-      base
-    , containers
-    , reactive-banana
-    , sdl2
-    , sdl2-mixer
-    , termbox-banana
+    base,
+    containers,
+    reactive-banana ^>= 1.3,
+    sdl2,
+    sdl2-mixer,
+    termbox-banana ^>= 2.0.0,
+  default-language: GHC2021
   ghc-options:
     -O
     -rtsopts

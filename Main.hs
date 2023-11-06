@@ -1,10 +1,10 @@
+{-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecursiveDo #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
-{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 import Control.Concurrent
 import Control.Exception (handle, throwIO)
@@ -12,17 +12,18 @@ import Control.Monad
 import Data.Bifunctor (second)
 import Data.Foldable
 import Data.Function (on, (&))
+import Data.Functor ((<&>))
 import Data.IntMap (IntMap)
-import qualified Data.IntMap as IntMap
+import Data.IntMap qualified as IntMap
 import Data.List (deleteBy)
 import Data.Map (Map)
-import qualified Data.Map as Map
+import Data.Map qualified as Map
 import Data.Maybe
 import Reactive.Banana
 import Reactive.Banana.Frameworks
-import qualified SDL
-import qualified SDL.Mixer
-import qualified Termbox.Banana as Tb
+import SDL qualified
+import SDL.Mixer qualified
+import Termbox.Banana qualified as Tb
 
 -- TODO Render pressed key better (same background in binding)
 
@@ -30,11 +31,9 @@ main :: IO ()
 main = do
   SDL.initialize [SDL.InitAudio]
 
-  SDL.Mixer.withAudio audio 256 $ do
+  SDL.Mixer.withAudio audio 256 do
     SDL.Mixer.setChannels 32
-
-    chunks :: IntMap SDL.Mixer.Chunk <- do
-      traverse SDL.Mixer.load pianoFiles
+    chunks <- traverse SDL.Mixer.load pianoFiles
 
     let notes :: IntMap (IO ())
         notes =
@@ -42,20 +41,27 @@ main = do
           where
             ignore :: IO () -> IO ()
             ignore =
-              handle $ \case
+              handle \case
                 NoFreeChannels -> pure ()
                 e -> throwIO e
 
     let play :: Key -> IO ()
         play k =
-          fromMaybe (pure ()) (IntMap.lookup (fromEnum k) notes)
+          for_ (IntMap.lookup (fromEnum k) notes) id
 
-    Tb.run $ \(Tb.Inputs _size eKey _eSize _eMouse) -> mdo
-      InterfaceOut ePianoInput eDone bScene <-
-        makeInterface (InterfaceIn eKey ePianoOutput bPianoView)
-      PianoOut ePianoOutput bPianoView <-
-        makePiano play ePianoInput
-      pure (Tb.Outputs bScene eDone)
+    _ <-
+      Tb.run \(Tb.Inputs initialTerminalSize keys terminalSizes _mouses) -> mdo
+        InterfaceOut pianoInput done scene <-
+          makeInterface
+            InterfaceIn
+              { keys,
+                initialTerminalSize,
+                terminalSizes,
+                piano
+              }
+        PianoOutput played piano <- makePiano pianoInput
+        reactimate (play <$> played)
+        pure (Tb.Outputs scene done)
 
     for_ chunks SDL.Mixer.free
 
@@ -64,126 +70,118 @@ main = do
     audio :: SDL.Mixer.Audio
     audio =
       SDL.Mixer.Audio
-        { SDL.Mixer.audioFrequency = 11025, -- 22050
+        { SDL.Mixer.audioFrequency = 11025,
           SDL.Mixer.audioFormat = SDL.Mixer.FormatS16_Sys,
           SDL.Mixer.audioOutput = SDL.Mixer.Stereo
         }
 
-data InterfaceIn
-  = InterfaceIn
-      (Event Tb.Key)
-      (Event PianoOutput)
-      (Behavior PianoView)
+data InterfaceIn = InterfaceIn
+  { keys :: Event Tb.Key,
+    initialTerminalSize :: Tb.Size,
+    terminalSizes :: Event Tb.Size,
+    piano :: Behavior PianoView
+  }
 
-data InterfaceOut
-  = InterfaceOut
-      (Event PianoInput)
-      (Event ())
-      (Behavior Tb.Scene)
+data InterfaceOut = InterfaceOut
+  { pianoInput :: PianoInput,
+    done :: Event (),
+    scene :: Behavior Tb.Scene
+  }
 
-data PianoOut
-  = PianoOut
-      (Event PianoOutput)
-      (Behavior PianoView)
-
-data PianoInput
-  = Tick
-  | Play Key
-  deriving (Eq)
+data PianoInput = PianoInput
+  { -- Some amount of time has passed.
+    ticks :: (Event ()),
+    -- Suggestions to play a key. They may be ignored (though I think the current implementation never ignores these),
+    -- as in the case when too many keys are already pressed.
+    keys :: (Event Key)
+  }
 
 data PianoOutput
   = PianoOutput
+      -- A key should actually be played
+      (Event Key)
+      (Behavior PianoView)
 
+-- The keys that are "currently" being played, i.e. their sounds begun in the recent past, and so they should look
+-- pressed-down when rendered.
 newtype PianoView
   = PianoView [Key]
 
-makeInterface ::
-  InterfaceIn ->
-  MomentIO InterfaceOut
-makeInterface (InterfaceIn eEvent _ePianoOutput bPianoView) = do
-  eTick :: Event PianoInput <- do
-    (eTick_, fireTick) <- newEvent
-    (liftIO . void . forkIO . forever) $ do
+makeInterface :: InterfaceIn -> MomentIO InterfaceOut
+makeInterface InterfaceIn {keys, initialTerminalSize, terminalSizes, piano} = do
+  terminalSize <- stepper initialTerminalSize terminalSizes
+
+  ticks :: Event () <- do
+    (ticks, fireTick) <- newEvent
+    (liftIO . void . forkIO . forever) do
       threadDelay (125 * 1000)
-      fireTick Tick
-    pure eTick_
+      fireTick ()
+    pure ticks
 
-  let eKeyChar :: Event Char
-      eKeyChar =
-        filterJust
-          ( ( \case
-                Tb.KeyChar c -> Just c
-                _ -> Nothing
-            )
-              <$> eEvent
-          )
+  let keyChars :: Event Char
+      keyChars =
+        filterJust $
+          keys
+            <&> \case
+              Tb.KeyChar c -> Just c
+              _ -> Nothing
 
-  let eDone :: Event ()
-      eDone =
-        () <$ filterE (== Tb.KeyEsc) eEvent
-
-  bKeyBindings :: Behavior KeyBindings <- do
-    let eLeft = filterE (== Tb.KeyArrowLeft) eEvent
-        eRight = filterE (== Tb.KeyArrowRight) eEvent
-        eDown = filterE (== Tb.KeyArrowDown) eEvent
-        eUp = filterE (== Tb.KeyArrowUp) eEvent
+  keyBindings :: Behavior KeyBindings <- do
+    let leftArrows = filterE (== Tb.KeyArrowLeft) keys
+        rightArrows = filterE (== Tb.KeyArrowRight) keys
+        downArrows = filterE (== Tb.KeyArrowDown) keys
+        upArrows = filterE (== Tb.KeyArrowUp) keys
     (fmap . fmap) zextract $
       accumB
         (iterate zright (zfromList [minBound .. maxBound]) !! 13)
         ( unions
-            [ zleft <$ eLeft,
-              zright <$ eRight,
-              (!! 7) . iterate zleft <$ eDown,
-              (!! 7) . iterate zright <$ eUp
+            [ zleft <$ leftArrows,
+              zright <$ rightArrows,
+              (!! 7) . iterate zleft <$ downArrows,
+              (!! 7) . iterate zright <$ upArrows
             ]
         )
 
-  let ePlay :: Event Key
-      ePlay =
-        filterJust (readKey <$> bKeyBindings <@> eKeyChar)
+  let pianoInput :: PianoInput
+      pianoInput =
+        PianoInput
+          { ticks = ticks,
+            keys = filterJust (readKey <$> keyBindings <@> keyChars)
+          }
 
-  let ePianoInput :: Event PianoInput
-      ePianoInput =
-        unionWith const (Play <$> ePlay) eTick
+  pure
+    InterfaceOut
+      { pianoInput,
+        done = () <$ filterE (== Tb.KeyEsc) keys,
+        scene =
+          ( \image size ->
+              image
+                & Tb.at (Tb.Pos ((size.height - 9) `div` 2) ((size.width - 155) `div` 2))
+                & Tb.image
+                & Tb.fill (Tb.gray 4)
+          )
+            <$> fold
+              [ renderPiano <$> piano,
+                renderKeyBindings <$> keyBindings
+              ]
+            <*> terminalSize
+      }
 
-  let bScene :: Behavior Tb.Scene
-      bScene =
-        mconcat
-          [ renderPiano <$> bPianoView,
-            renderKeyBindings <$> bKeyBindings
-          ]
-
-  pure (InterfaceOut ePianoInput eDone bScene)
-
-makePiano ::
-  (Key -> IO ()) ->
-  Event PianoInput ->
-  MomentIO PianoOut
-makePiano play ePianoInput = do
-  let eTick :: Event PianoInput
-      eTick =
-        filterE (== Tick) ePianoInput
-
-  let ePlay :: Event Key
-      ePlay =
-        filterJust (f <$> ePianoInput)
-        where
-          f :: PianoInput -> Maybe Key
-          f = \case
-            Play key -> Just key
-            Tick -> Nothing
+makePiano :: (MonadMoment m) => PianoInput -> m PianoOutput
+makePiano input = do
+  let ePlayed :: Event Key
+      ePlayed =
+        input.keys
 
   rec bPiano :: Behavior [(Key, Int)] <- do
-        let eTicked :: Event [(Key, Int)]
-            eTicked =
-              filterJust (f <$> bPiano <@ eTick)
+        let ePianoAfterTick :: Event [(Key, Int)]
+            ePianoAfterTick =
+              filterJust (f <$> bPiano <@ input.ticks)
               where
                 f :: [(Key, Int)] -> Maybe [(Key, Int)]
                 f = \case
-                  [] ->
-                    Nothing
-                  ks ->
-                    (Just . map dec . filter pressed) ks
+                  [] -> Nothing
+                  ks -> (Just . map dec . filter pressed) ks
                   where
                     dec :: (Key, Int) -> (Key, Int)
                     dec =
@@ -193,23 +191,21 @@ makePiano play ePianoInput = do
                     pressed =
                       (> 1) . snd
 
-        let ePlayed :: Event [(Key, Int)]
-            ePlayed =
-              f <$> bPiano <@> ePlay
+        let ePianoAfterPlayed :: Event [(Key, Int)]
+            ePianoAfterPlayed =
+              f <$> bPiano <@> ePlayed
               where
                 f :: [(Key, Int)] -> Key -> [(Key, Int)]
                 f ks k =
                   (k, 2) : deleteBy ((==) `on` fst) (k, undefined) ks
 
-        stepper [] (unionWith const eTicked ePlayed)
+        stepper [] (unionWith const ePianoAfterTick ePianoAfterPlayed)
 
   let bPianoView :: Behavior PianoView
       bPianoView =
         PianoView . map fst <$> bPiano
 
-  reactimate (play <$> ePlay)
-
-  pure (PianoOut never bPianoView)
+  pure (PianoOutput ePlayed bPianoView)
 
 data Key
   = A0
@@ -568,7 +564,7 @@ readKey = \case
     keysFs = "azsxdcvgbhnmk,l.;/q2w3er5t6y7ui9o0p[=]"
     keysGs = "azsxcfvgbnjmk,l./'q2we4r5t6yu8i9op-[=]"
 
-renderKeyBindings :: KeyBindings -> Tb.Scene
+renderKeyBindings :: KeyBindings -> Tb.Image
 renderKeyBindings = \case
   KeyBindingsA0 -> keyBindingsA 0
   KeyBindingsAs0 -> keyBindingsAs 2
@@ -608,7 +604,7 @@ renderKeyBindings = \case
       keyBindingsCs,
       keyBindingsDs,
       keyBindingsF ::
-        Int -> Tb.Scene
+        Int -> Tb.Image
     keyBindingsA c = whites (c + 1) <> blacksA (c + 3)
     keyBindingsAs c = whites (c + 2) <> blacksAs (c + 1)
     keyBindingsC c = whites (c + 2) <> blacksC (c + 4)
@@ -618,7 +614,7 @@ renderKeyBindings = \case
     keyBindingsFs c = whites (c + 3) <> blacksFs (c + 2)
     keyBindingsGs c = whites (c + 3) <> blacksGs (c + 2)
 
-    blacksA, blacksAs, blacksC, blacksCs :: Int -> Tb.Scene
+    blacksA, blacksAs, blacksC, blacksCs :: Int -> Tb.Image
     blacksA = blacks [0, 6, 9, 15, 18, 21, 27, 30, 36, 39, 42, 48, 51, 57, 60] "sfgjkl'245689-="
     blacksAs = blacks [0, 6, 9, 15, 18, 21, 27, 30, 36, 39, 42, 48, 51, 57, 60, 63] "adfhjk;'345780-="
     blacksC = blacks [0, 3, 9, 12, 15, 21, 24, 30, 33, 36, 42, 45, 51, 54, 57] "sdghjl;2346790-"
@@ -628,178 +624,203 @@ renderKeyBindings = \case
     blacksFs = blacks [0, 3, 6, 12, 15, 21, 24, 27, 33, 36, 42, 45, 48, 54, 57, 63] "asdghkl;2356790="
     blacksGs = blacks [0, 3, 9, 12, 18, 21, 24, 30, 33, 39, 42, 45, 51, 54, 60, 63] "asfgjkl'245689-="
 
-    whites :: Int -> Tb.Scene
+    whites :: Int -> Tb.Image
     whites c0 =
-      foldMap
-        (white c0)
-        (zip [0, 3 ..] "zxcvbnm,./qwertyuiop[]")
+      foldMap (white c0) (zip [0, 3 ..] "zxcvbnm,./qwertyuiop[]")
 
-    blacks :: [Int] -> [Char] -> Int -> Tb.Scene
+    blacks :: [Int] -> [Char] -> Int -> Tb.Image
     blacks xs ys c0 =
       foldMap (black c0) (zip xs ys)
 
-    white :: Int -> (Int, Char) -> Tb.Scene
+    white :: Int -> (Int, Char) -> Tb.Image
     white c0 (c, x) =
-      Tb.cell (Tb.Pos 9 (c0 + c)) (Tb.char x & Tb.fg (Tb.gray 0) & Tb.bg (Tb.gray 23))
+      Tb.char x
+        & Tb.fg (Tb.gray 0)
+        & Tb.bg (Tb.gray 23)
+        & Tb.at (Tb.Pos 9 (c0 + c))
 
-    black :: Int -> (Int, Char) -> Tb.Scene
+    black :: Int -> (Int, Char) -> Tb.Image
     black c0 (c, x) =
-      Tb.cell (Tb.Pos 5 (c0 + c)) (Tb.char x & Tb.fg Tb.white & Tb.bg (Tb.gray 0))
+      Tb.char x
+        & Tb.fg Tb.white
+        & Tb.bg (Tb.gray 0)
+        & Tb.at (Tb.Pos 5 (c0 + c))
 
-renderPiano :: PianoView -> Tb.Scene
+renderPiano :: PianoView -> Tb.Image
 renderPiano (PianoView keys) =
-  foldMap (\c -> Tb.cell (Tb.Pos 0 c) (Tb.char ' ' & Tb.bg Tb.red)) [0 .. 155]
-    <> foldMap (\k -> renderKey 0 1 (k, k `elem` keys)) [minBound .. maxBound]
+  fold
+    [ [0 .. 155] & foldMap \c ->
+        Tb.char ' '
+          & Tb.bg Tb.red
+          & Tb.atCol c,
+      Tb.atRow 1 $
+        [minBound .. maxBound] & foldMap \k ->
+          renderKey (k, k `elem` keys)
+    ]
   where
-    renderKey :: Int -> Int -> (Key, Bool) -> Tb.Scene
-    renderKey c0 r0 =
-      fromMaybe mempty . flip Map.lookup m
-      where
-        m :: Map (Key, Bool) Tb.Scene
-        m =
-          Map.fromList $ do
-            key <- [minBound .. maxBound]
-            p <- [False, True]
-            pure ((key, p), renderKey_ (c0 + keyOffset key) r0 p (keyShape key))
+    renderKey :: (Key, Bool) -> Tb.Image
+    renderKey =
+      fromMaybe mempty . flip Map.lookup renderedKeys
+
+renderedKeys :: Map (Key, Bool) Tb.Image
+renderedKeys =
+  Map.fromList do
+    key <- [minBound .. maxBound]
+    pressed <- [False, True]
+    pure
+      ( (key, pressed),
+        renderKey_ pressed (keyShape key)
+          & Tb.atCol (keyOffset key)
+      )
 
 -- TODO clean this function up
-renderKey_ :: Int -> Int -> Bool -> KeyShape -> Tb.Scene
-renderKey_ c r p = \case
+renderKey_ :: Bool -> KeyShape -> Tb.Image
+renderKey_ pressed = \case
   KeyShapeL ->
-    let dl u v = Tb.cell (Tb.Pos v u) (Tb.char ' ' & Tb.bg (if p then Tb.blue else Tb.gray 22))
-        dr u v = Tb.cell (Tb.Pos v u) (Tb.char ' ' & Tb.bg (if p then Tb.blue else Tb.gray 23))
+    let dl u v =
+          Tb.char ' '
+            & Tb.bg (if pressed then Tb.blue else Tb.gray 22)
+            & Tb.at (Tb.Pos v u)
+        dr u v =
+          Tb.char ' '
+            & Tb.bg (if pressed then Tb.blue else Tb.gray 23)
+            & Tb.at (Tb.Pos v u)
      in mconcat
-          [ dl c0 r0,
-            dl c0 r1,
-            dl c0 r2,
-            dl c0 r3,
-            dl c0 r4,
-            dl c0 r5,
-            dl c0 r6,
-            dl c0 r7,
-            dl c0 r8,
-            dr c1 r0,
-            dr c1 r1,
-            dr c1 r2,
-            dr c1 r3,
-            dr c1 r4,
-            dr c1 r5,
-            dr c1 r6,
-            dr c1 r7,
-            dr c1 r8,
-            dr c2 r5,
-            dr c2 r6,
-            dr c2 r7,
-            dr c2 r8
+          [ dl 0 0,
+            dl 0 1,
+            dl 0 2,
+            dl 0 3,
+            dl 0 4,
+            dl 0 5,
+            dl 0 6,
+            dl 0 7,
+            dl 0 8,
+            dr 1 0,
+            dr 1 1,
+            dr 1 2,
+            dr 1 3,
+            dr 1 4,
+            dr 1 5,
+            dr 1 6,
+            dr 1 7,
+            dr 1 8,
+            dr 2 5,
+            dr 2 6,
+            dr 2 7,
+            dr 2 8
           ]
   KeyShapeU ->
-    let dl u v = Tb.cell (Tb.Pos v u) (Tb.char ' ' & Tb.bg (if p then Tb.blue else Tb.gray 22))
-        dr u v = Tb.cell (Tb.Pos v u) (Tb.char ' ' & Tb.bg (if p then Tb.blue else Tb.gray 23))
+    let dl u v =
+          Tb.char ' '
+            & Tb.bg (if pressed then Tb.blue else Tb.gray 22)
+            & Tb.at (Tb.Pos v u)
+        dr u v =
+          Tb.char ' '
+            & Tb.bg (if pressed then Tb.blue else Tb.gray 23)
+            & Tb.at (Tb.Pos v u)
      in mconcat
-          [ dl c0 r5,
-            dl c0 r6,
-            dl c0 r7,
-            dl c0 r8,
-            dr c1 r0,
-            dr c1 r1,
-            dr c1 r2,
-            dr c1 r3,
-            dr c1 r4,
-            dr c1 r5,
-            dr c1 r6,
-            dr c1 r7,
-            dr c1 r8,
-            dr c2 r5,
-            dr c2 r6,
-            dr c2 r7,
-            dr c2 r8
+          [ dl 0 5,
+            dl 0 6,
+            dl 0 7,
+            dl 0 8,
+            dr 1 0,
+            dr 1 1,
+            dr 1 2,
+            dr 1 3,
+            dr 1 4,
+            dr 1 5,
+            dr 1 6,
+            dr 1 7,
+            dr 1 8,
+            dr 2 5,
+            dr 2 6,
+            dr 2 7,
+            dr 2 8
           ]
   KeyShapeR ->
-    let dl u v = Tb.cell (Tb.Pos v u) (Tb.char ' ' & Tb.bg (if p then Tb.blue else Tb.gray 22))
-        dr u v = Tb.cell (Tb.Pos v u) (Tb.char ' ' & Tb.bg (if p then Tb.blue else Tb.gray 23))
+    let dl u v =
+          Tb.char ' '
+            & Tb.bg (if pressed then Tb.blue else Tb.gray 22)
+            & Tb.at (Tb.Pos v u)
+        dr u v =
+          Tb.char ' '
+            & Tb.bg (if pressed then Tb.blue else Tb.gray 23)
+            & Tb.at (Tb.Pos v u)
      in mconcat
-          [ dl c0 r5,
-            dl c0 r6,
-            dl c0 r7,
-            dl c0 r8,
-            dr c1 r0,
-            dr c1 r1,
-            dr c1 r2,
-            dr c1 r3,
-            dr c1 r4,
-            dr c2 r0,
-            dr c2 r1,
-            dr c2 r2,
-            dr c2 r3,
-            dr c2 r4,
-            dr c1 r5,
-            dr c2 r5,
-            dr c1 r6,
-            dr c2 r6,
-            dr c1 r7,
-            dr c2 r7,
-            dr c1 r8,
-            dr c2 r8
+          [ dl 0 5,
+            dl 0 6,
+            dl 0 7,
+            dl 0 8,
+            dr 1 0,
+            dr 1 1,
+            dr 1 2,
+            dr 1 3,
+            dr 1 4,
+            dr 2 0,
+            dr 2 1,
+            dr 2 2,
+            dr 2 3,
+            dr 2 4,
+            dr 1 5,
+            dr 2 5,
+            dr 1 6,
+            dr 2 6,
+            dr 1 7,
+            dr 2 7,
+            dr 1 8,
+            dr 2 8
           ]
   KeyShapeW ->
     let d u v =
-          Tb.cell (Tb.Pos v u) (Tb.char ' ' & Tb.bg (if p then Tb.blue else Tb.gray 23))
+          Tb.char ' '
+            & Tb.bg (if pressed then Tb.blue else Tb.gray 23)
+            & Tb.at (Tb.Pos v u)
      in mconcat
-          [ d c r,
-            d (c + 1) r,
-            d (c + 2) r,
-            d c (r + 1),
-            d (c + 1) (r + 1),
-            d (c + 2) (r + 1),
-            d c (r + 2),
-            d (c + 1) (r + 2),
-            d (c + 2) (r + 2),
-            d c (r + 3),
-            d (c + 1) (r + 3),
-            d (c + 2) (r + 3),
-            d c (r + 4),
-            d (c + 1) (r + 4),
-            d (c + 2) (r + 4),
-            d c (r + 5),
-            d (c + 1) (r + 5),
-            d (c + 2) (r + 5),
-            d c (r + 6),
-            d (c + 1) (r + 6),
-            d (c + 2) (r + 6),
-            d c (r + 7),
-            d (c + 1) (r + 7),
-            d (c + 2) (r + 7),
-            d c (r + 8),
-            d (c + 1) (r + 8),
-            d (c + 2) (r + 8)
+          [ d 0 0,
+            d 0 1,
+            d 0 2,
+            d 0 3,
+            d 0 4,
+            d 0 5,
+            d 0 6,
+            d 0 7,
+            d 0 8,
+            d 1 0,
+            d 1 1,
+            d 1 2,
+            d 1 3,
+            d 1 4,
+            d 1 5,
+            d 1 6,
+            d 1 7,
+            d 1 8,
+            d 2 0,
+            d 2 1,
+            d 2 2,
+            d 2 3,
+            d 2 4,
+            d 2 5,
+            d 2 6,
+            d 2 7,
+            d 2 8
           ]
   KeyShapeB ->
-    let d v u = Tb.cell (Tb.Pos u v) (Tb.char ' ' & Tb.bg (if p then Tb.red else Tb.gray 0))
+    let d v u =
+          Tb.char ' '
+            & Tb.bg (if pressed then Tb.red else Tb.gray 0)
+            & Tb.at (Tb.Pos u v)
      in mconcat
-          [ d c r,
-            d (c + 1) r,
-            d c (r + 1),
-            d (c + 1) (r + 1),
-            d c (r + 2),
-            d (c + 1) (r + 2),
-            d c (r + 3),
-            d (c + 1) (r + 3),
-            d c (r + 4),
-            d (c + 1) (r + 4)
+          [ d 0 0,
+            d 0 1,
+            d 0 2,
+            d 0 3,
+            d 0 4,
+            d 1 0,
+            d 1 1,
+            d 1 2,
+            d 1 3,
+            d 1 4
           ]
-  where
-    c0 = c + 0
-    c1 = c + 1
-    c2 = c + 2
-    r0 = r + 0
-    r1 = r + 1
-    r2 = r + 2
-    r3 = r + 3
-    r4 = r + 4
-    r5 = r + 5
-    r6 = r + 6
-    r7 = r + 7
-    r8 = r + 8
 
 data Z a
   = Z [a] a [a]
